@@ -1,0 +1,36 @@
+# --- Coq/Rocq ---
+*.vo
+*.vos
+*.vok
+*.glob
+.coq-native/
+.coqdeps.d
+.theory-cache/
+# Rocq build/extraction output (adjust if different)
+rocq/_build/
+rocq/out/
+
+# --- Haskell (cabal/ghc/stack) ---
+dist/
+dist-*/
+dist-newstyle/
+.stack-work/
+*.o
+*.hi
+*.dyn_o
+*.dyn_hi
+.ghc.environment.*
+cabal.project.local
+cabal.project.local~*
+
+# --- IDE/editor ---
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# --- Data (keep big datasets out) ---
+*.csv
+*.tsv
+*.parquet
