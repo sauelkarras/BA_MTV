@@ -4,5 +4,6 @@
 theories/Base.v
 theories/RangeChecker.v
 theories/PointwiseContradictions.v
+theories/ClassBalance.v
 theories/Checker.v
 extraction/Extract.v

@@ -14,6 +14,109 @@ compOpp r =
    Lt -> Gt;
    Gt -> Lt}
 
+succ :: Prelude.Integer -> Prelude.Integer
+succ x =
+  (\fI fO fH n -> if n Prelude.== 1 then fH () else
+                   if Prelude.odd n
+                   then fI (n `Prelude.div` 2)
+                   else fO (n `Prelude.div` 2))
+    (\p -> (\x -> 2 Prelude.* x) (succ p))
+    (\p -> (\x -> 2 Prelude.* x Prelude.+ 1) p)
+    (\_ -> (\x -> 2 Prelude.* x) 1)
+    x
+
+add :: Prelude.Integer -> Prelude.Integer -> Prelude.Integer
+add x y0 =
+  (\fI fO fH n -> if n Prelude.== 1 then fH () else
+                   if Prelude.odd n
+                   then fI (n `Prelude.div` 2)
+                   else fO (n `Prelude.div` 2))
+    (\p ->
+    (\fI fO fH n -> if n Prelude.== 1 then fH () else
+                   if Prelude.odd n
+                   then fI (n `Prelude.div` 2)
+                   else fO (n `Prelude.div` 2))
+      (\q -> (\x -> 2 Prelude.* x) (add_carry p q))
+      (\q -> (\x -> 2 Prelude.* x Prelude.+ 1) (add p q))
+      (\_ -> (\x -> 2 Prelude.* x) (succ p))
+      y0)
+    (\p ->
+    (\fI fO fH n -> if n Prelude.== 1 then fH () else
+                   if Prelude.odd n
+                   then fI (n `Prelude.div` 2)
+                   else fO (n `Prelude.div` 2))
+      (\q -> (\x -> 2 Prelude.* x Prelude.+ 1) (add p q))
+      (\q -> (\x -> 2 Prelude.* x) (add p q))
+      (\_ -> (\x -> 2 Prelude.* x Prelude.+ 1) p)
+      y0)
+    (\_ ->
+    (\fI fO fH n -> if n Prelude.== 1 then fH () else
+                   if Prelude.odd n
+                   then fI (n `Prelude.div` 2)
+                   else fO (n `Prelude.div` 2))
+      (\q -> (\x -> 2 Prelude.* x) (succ q))
+      (\q -> (\x -> 2 Prelude.* x Prelude.+ 1) q)
+      (\_ -> (\x -> 2 Prelude.* x) 1)
+      y0)
+    x
+
+add_carry :: Prelude.Integer -> Prelude.Integer -> Prelude.Integer
+add_carry x y0 =
+  (\fI fO fH n -> if n Prelude.== 1 then fH () else
+                   if Prelude.odd n
+                   then fI (n `Prelude.div` 2)
+                   else fO (n `Prelude.div` 2))
+    (\p ->
+    (\fI fO fH n -> if n Prelude.== 1 then fH () else
+                   if Prelude.odd n
+                   then fI (n `Prelude.div` 2)
+                   else fO (n `Prelude.div` 2))
+      (\q -> (\x -> 2 Prelude.* x Prelude.+ 1) (add_carry p q))
+      (\q -> (\x -> 2 Prelude.* x) (add_carry p q))
+      (\_ -> (\x -> 2 Prelude.* x Prelude.+ 1) (succ p))
+      y0)
+    (\p ->
+    (\fI fO fH n -> if n Prelude.== 1 then fH () else
+                   if Prelude.odd n
+                   then fI (n `Prelude.div` 2)
+                   else fO (n `Prelude.div` 2))
+      (\q -> (\x -> 2 Prelude.* x) (add_carry p q))
+      (\q -> (\x -> 2 Prelude.* x Prelude.+ 1) (add p q))
+      (\_ -> (\x -> 2 Prelude.* x) (succ p))
+      y0)
+    (\_ ->
+    (\fI fO fH n -> if n Prelude.== 1 then fH () else
+                   if Prelude.odd n
+                   then fI (n `Prelude.div` 2)
+                   else fO (n `Prelude.div` 2))
+      (\q -> (\x -> 2 Prelude.* x Prelude.+ 1) (succ q))
+      (\q -> (\x -> 2 Prelude.* x) (succ q))
+      (\_ -> (\x -> 2 Prelude.* x Prelude.+ 1) 1)
+      y0)
+    x
+
+pred_double :: Prelude.Integer -> Prelude.Integer
+pred_double x =
+  (\fI fO fH n -> if n Prelude.== 1 then fH () else
+                   if Prelude.odd n
+                   then fI (n `Prelude.div` 2)
+                   else fO (n `Prelude.div` 2))
+    (\p -> (\x -> 2 Prelude.* x Prelude.+ 1) ((\x -> 2 Prelude.* x) p))
+    (\p -> (\x -> 2 Prelude.* x Prelude.+ 1) (pred_double p))
+    (\_ -> 1)
+    x
+
+mul :: Prelude.Integer -> Prelude.Integer -> Prelude.Integer
+mul x y0 =
+  (\fI fO fH n -> if n Prelude.== 1 then fH () else
+                   if Prelude.odd n
+                   then fI (n `Prelude.div` 2)
+                   else fO (n `Prelude.div` 2))
+    (\p -> add y0 ((\x -> 2 Prelude.* x) (mul p y0)))
+    (\p -> (\x -> 2 Prelude.* x) (mul p y0))
+    (\_ -> y0)
+    x
+
 compare_cont :: Comparison -> Prelude.Integer -> Prelude.Integer ->
                 Comparison
 compare_cont r x y0 =
@@ -54,11 +157,92 @@ compare :: Prelude.Integer -> Prelude.Integer -> Comparison
 compare =
   compare_cont Eq
 
+fold_left :: (a1 -> a2 -> a1) -> (([]) a2) -> a1 -> a1
+fold_left f l a0 =
+  case l of {
+   ([]) -> a0;
+   (:) b t -> fold_left f t (f a0 b)}
+
 forallb :: (a1 -> Prelude.Bool) -> (([]) a1) -> Prelude.Bool
 forallb f l =
   case l of {
    ([]) -> Prelude.True;
    (:) a l0 -> (Prelude.&&) (f a) (forallb f l0)}
+
+double :: Prelude.Integer -> Prelude.Integer
+double x =
+  (\fO fP fN n -> if n Prelude.== 0 then fO () else
+                   if n Prelude.> 0 then fP n else
+                   fN (Prelude.negate n))
+    (\_ -> 0)
+    (\p -> (\x -> x) ((\x -> 2 Prelude.* x) p))
+    (\p -> Prelude.negate ((\x -> 2 Prelude.* x) p))
+    x
+
+succ_double :: Prelude.Integer -> Prelude.Integer
+succ_double x =
+  (\fO fP fN n -> if n Prelude.== 0 then fO () else
+                   if n Prelude.> 0 then fP n else
+                   fN (Prelude.negate n))
+    (\_ -> (\x -> x) 1)
+    (\p -> (\x -> x) ((\x -> 2 Prelude.* x Prelude.+ 1) p))
+    (\p -> Prelude.negate (pred_double p))
+    x
+
+pred_double0 :: Prelude.Integer -> Prelude.Integer
+pred_double0 x =
+  (\fO fP fN n -> if n Prelude.== 0 then fO () else
+                   if n Prelude.> 0 then fP n else
+                   fN (Prelude.negate n))
+    (\_ -> Prelude.negate 1)
+    (\p -> (\x -> x) (pred_double p))
+    (\p -> Prelude.negate ((\x -> 2 Prelude.* x Prelude.+ 1) p))
+    x
+
+pos_sub :: Prelude.Integer -> Prelude.Integer -> Prelude.Integer
+pos_sub x y0 =
+  (\fI fO fH n -> if n Prelude.== 1 then fH () else
+                   if Prelude.odd n
+                   then fI (n `Prelude.div` 2)
+                   else fO (n `Prelude.div` 2))
+    (\p ->
+    (\fI fO fH n -> if n Prelude.== 1 then fH () else
+                   if Prelude.odd n
+                   then fI (n `Prelude.div` 2)
+                   else fO (n `Prelude.div` 2))
+      (\q -> double (pos_sub p q))
+      (\q -> succ_double (pos_sub p q))
+      (\_ -> (\x -> x) ((\x -> 2 Prelude.* x) p))
+      y0)
+    (\p ->
+    (\fI fO fH n -> if n Prelude.== 1 then fH () else
+                   if Prelude.odd n
+                   then fI (n `Prelude.div` 2)
+                   else fO (n `Prelude.div` 2))
+      (\q -> pred_double0 (pos_sub p q))
+      (\q -> double (pos_sub p q))
+      (\_ -> (\x -> x) (pred_double p))
+      y0)
+    (\_ ->
+    (\fI fO fH n -> if n Prelude.== 1 then fH () else
+                   if Prelude.odd n
+                   then fI (n `Prelude.div` 2)
+                   else fO (n `Prelude.div` 2))
+      (\q -> Prelude.negate ((\x -> 2 Prelude.* x) q))
+      (\q -> Prelude.negate (pred_double q))
+      (\_ -> 0)
+      y0)
+    x
+
+opp :: Prelude.Integer -> Prelude.Integer
+opp x =
+  (\fO fP fN n -> if n Prelude.== 0 then fO () else
+                   if n Prelude.> 0 then fP n else
+                   fN (Prelude.negate n))
+    (\_ -> 0)
+    (\x0 -> Prelude.negate x0)
+    (\x0 -> (\x -> x) x0)
+    x
 
 compare0 :: Prelude.Integer -> Prelude.Integer -> Comparison
 compare0 x y0 =
@@ -104,27 +288,33 @@ ltb x y0 =
    _ -> Prelude.False}
 
 data Row =
-   Build_Row Prelude.Integer Prelude.Integer Prelude.Integer Prelude.String
+   Build_Row Prelude.Integer Prelude.Integer Prelude.Integer Prelude.String 
+ Prelude.String
 
 age :: Row -> Prelude.Integer
 age r =
   case r of {
-   Build_Row age0 _ _ _ -> age0}
+   Build_Row age0 _ _ _ _ -> age0}
 
 balance :: Row -> Prelude.Integer
 balance r =
   case r of {
-   Build_Row _ balance0 _ _ -> balance0}
+   Build_Row _ balance0 _ _ _ -> balance0}
 
 duration :: Row -> Prelude.Integer
 duration r =
   case r of {
-   Build_Row _ _ duration0 _ -> duration0}
+   Build_Row _ _ duration0 _ _ -> duration0}
 
 y :: Row -> Prelude.String
 y r =
   case r of {
-   Build_Row _ _ _ y0 -> y0}
+   Build_Row _ _ _ y0 _ -> y0}
+
+education :: Row -> Prelude.String
+education r =
+  case r of {
+   Build_Row _ _ _ _ education0 -> education0}
 
 type Dataset = ([]) Row
 
@@ -232,6 +422,128 @@ check_ds_contradiction :: (([]) Row) -> Prelude.Bool
 check_ds_contradiction ds =
   check_ds_contradiction_cfg default_contr_cfg ds
 
+exp_primary_pct :: Prelude.Integer
+exp_primary_pct =
+  (\x -> x) ((\x -> 2 Prelude.* x) ((\x -> 2 Prelude.* x)
+    ((\x -> 2 Prelude.* x Prelude.+ 1) ((\x -> 2 Prelude.* x) 1))))
+
+exp_secondary_pct :: Prelude.Integer
+exp_secondary_pct =
+  (\x -> x) ((\x -> 2 Prelude.* x) ((\x -> 2 Prelude.* x Prelude.+ 1)
+    ((\x -> 2 Prelude.* x) ((\x -> 2 Prelude.* x)
+    ((\x -> 2 Prelude.* x Prelude.+ 1) 1)))))
+
+exp_tertiary_pct :: Prelude.Integer
+exp_tertiary_pct =
+  (\x -> x) ((\x -> 2 Prelude.* x) ((\x -> 2 Prelude.* x Prelude.+ 1)
+    ((\x -> 2 Prelude.* x Prelude.+ 1) ((\x -> 2 Prelude.* x Prelude.+ 1)
+    1))))
+
+tol_pct :: Prelude.Integer
+tol_pct =
+  (\x -> x) ((\x -> 2 Prelude.* x) 1)
+
+data Edu_cat =
+   Primary
+ | Secondary
+ | Tertiary
+
+edu_primary :: Prelude.String
+edu_primary =
+  "primary"
+
+edu_secondary :: Prelude.String
+edu_secondary =
+  "secondary"
+
+edu_tertiary :: Prelude.String
+edu_tertiary =
+  "tertiary"
+
+edu_of_row :: Row -> Prelude.Maybe Edu_cat
+edu_of_row r =
+  let {e = education r} in
+  case ((Prelude.==) :: Prelude.String -> Prelude.String -> Prelude.Bool) e
+         edu_primary of {
+   Prelude.True -> Prelude.Just Primary;
+   Prelude.False ->
+    case ((Prelude.==) :: Prelude.String -> Prelude.String -> Prelude.Bool) e
+           edu_secondary of {
+     Prelude.True -> Prelude.Just Secondary;
+     Prelude.False ->
+      case ((Prelude.==) :: Prelude.String -> Prelude.String -> Prelude.Bool)
+             e edu_tertiary of {
+       Prelude.True -> Prelude.Just Tertiary;
+       Prelude.False -> Prelude.Nothing}}}
+
+type Counts =
+  (,) ((,) ((,) Prelude.Integer Prelude.Integer) Prelude.Integer)
+  Prelude.Integer
+
+add_edu :: Counts -> Row -> Counts
+add_edu acc r =
+  case acc of {
+   (,) p cU ->
+    case p of {
+     (,) p0 cT ->
+      case p0 of {
+       (,) cP cS ->
+        case edu_of_row r of {
+         Prelude.Just e ->
+          case e of {
+           Primary -> (,) ((,) ((,) ((Prelude.+) cP ((\x -> x) 1)) cS) cT) cU;
+           Secondary -> (,) ((,) ((,) cP ((Prelude.+) cS ((\x -> x) 1))) cT)
+            cU;
+           Tertiary -> (,) ((,) ((,) cP cS) ((Prelude.+) cT ((\x -> x) 1)))
+            cU};
+         Prelude.Nothing -> (,) ((,) ((,) cP cS) cT)
+          ((Prelude.+) cU ((\x -> x) 1))}}}}
+
+count_edu :: Dataset -> Counts
+count_edu ds =
+  fold_left add_edu ds ((,) ((,) ((,) 0 0) 0) 0)
+
+within_band :: Prelude.Integer -> Prelude.Integer -> Prelude.Integer ->
+               Prelude.Integer -> Prelude.Bool
+within_band exp tol cnt tot =
+  case leb tot 0 of {
+   Prelude.True -> Prelude.False;
+   Prelude.False ->
+    let {lower = (Prelude.*) ((Prelude.-) exp tol) tot} in
+    let {upper = (Prelude.*) ((Prelude.+) exp tol) tot} in
+    let {
+     scaled = (Prelude.*) ((\x -> x) ((\x -> 2 Prelude.* x)
+                ((\x -> 2 Prelude.* x) ((\x -> 2 Prelude.* x Prelude.+ 1)
+                ((\x -> 2 Prelude.* x) ((\x -> 2 Prelude.* x)
+                ((\x -> 2 Prelude.* x Prelude.+ 1) 1))))))) cnt}
+    in
+    (Prelude.&&) (leb lower scaled) (leb scaled upper)}
+
+ok_class_balance :: Dataset -> Prelude.Bool
+ok_class_balance ds =
+  case count_edu ds of {
+   (,) p _ ->
+    case p of {
+     (,) p0 cT ->
+      case p0 of {
+       (,) cP cS ->
+        let {tot = (Prelude.+) ((Prelude.+) cP cS) cT} in
+        case leb tot 0 of {
+         Prelude.True -> Prelude.False;
+         Prelude.False ->
+          (Prelude.&&)
+            ((Prelude.&&) (within_band exp_primary_pct tol_pct cP tot)
+              (within_band exp_secondary_pct tol_pct cS tot))
+            (within_band exp_tertiary_pct tol_pct cT tot)}}}}
+
+ds_ok_class :: Dataset -> Prelude.Bool
+ds_ok_class =
+  ok_class_balance
+
+edu_counts :: Dataset -> Counts
+edu_counts =
+  count_edu
+
 rec_ok_range :: Policy -> Row -> Prelude.Bool
 rec_ok_range =
   check_rec_range
@@ -262,21 +574,21 @@ tiny_ds =
     ((\x -> 2 Prelude.* x Prelude.+ 1) ((\x -> 2 Prelude.* x Prelude.+ 1)
     ((\x -> 2 Prelude.* x Prelude.+ 1) ((\x -> 2 Prelude.* x Prelude.+ 1)
     1)))))))))) ((\x -> x) ((\x -> 2 Prelude.* x) ((\x -> 2 Prelude.* x)
-    ((\x -> 2 Prelude.* x Prelude.+ 1) 1)))) "no") ((:) (Build_Row ((\x -> x)
-    ((\x -> 2 Prelude.* x Prelude.+ 1) ((\x -> 2 Prelude.* x)
+    ((\x -> 2 Prelude.* x Prelude.+ 1) 1)))) "no" "unknown") ((:) (Build_Row
+    ((\x -> x) ((\x -> 2 Prelude.* x Prelude.+ 1) ((\x -> 2 Prelude.* x)
     ((\x -> 2 Prelude.* x Prelude.+ 1) ((\x -> 2 Prelude.* x Prelude.+ 1)
     ((\x -> 2 Prelude.* x) 1)))))) 0 ((\x -> x)
     ((\x -> 2 Prelude.* x Prelude.+ 1) ((\x -> 2 Prelude.* x)
     ((\x -> 2 Prelude.* x Prelude.+ 1) ((\x -> 2 Prelude.* x Prelude.+ 1)
-    ((\x -> 2 Prelude.* x) 1)))))) "yes") ((:) (Build_Row ((\x -> x)
-    ((\x -> 2 Prelude.* x Prelude.+ 1) ((\x -> 2 Prelude.* x)
+    ((\x -> 2 Prelude.* x) 1)))))) "yes" "secondary") ((:) (Build_Row
+    ((\x -> x) ((\x -> 2 Prelude.* x Prelude.+ 1) ((\x -> 2 Prelude.* x)
     ((\x -> 2 Prelude.* x) ((\x -> 2 Prelude.* x) 1))))) ((\x -> x)
     ((\x -> 2 Prelude.* x) ((\x -> 2 Prelude.* x) ((\x -> 2 Prelude.* x)
     ((\x -> 2 Prelude.* x Prelude.+ 1) ((\x -> 2 Prelude.* x)
     ((\x -> 2 Prelude.* x) ((\x -> 2 Prelude.* x Prelude.+ 1) 1))))))))
     ((\x -> x) ((\x -> 2 Prelude.* x) ((\x -> 2 Prelude.* x)
-    ((\x -> 2 Prelude.* x Prelude.+ 1) ((\x -> 2 Prelude.* x) 1))))) "no")
-    ([])))
+    ((\x -> 2 Prelude.* x Prelude.+ 1) ((\x -> 2 Prelude.* x) 1))))) "no"
+    "primary") ([])))
 
 tiny_run_ranges :: Prelude.Bool
 tiny_run_ranges =
@@ -285,4 +597,8 @@ tiny_run_ranges =
 tiny_run_contr :: Prelude.Bool
 tiny_run_contr =
   ds_ok_contr tiny_ds
+
+tiny_run_class :: Prelude.Bool
+tiny_run_class =
+  ds_ok_class tiny_ds
 
