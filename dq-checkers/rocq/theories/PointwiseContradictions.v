@@ -1,64 +1,83 @@
-From Coq Require Import List String ZArith Bool.
+From Coq Require Import
+     ZArith
+     String
+     List
+     Bool.
+
 Import ListNotations.
-Local Open Scope string_scope.
+Open Scope Z_scope.
+Open Scope string_scope.
 
-From DQ Require Import Base.
+(************************************************************)
+(** Atomic predicates for pointwise contradictions         *)
+(** Rocq only defines per-value operations.                *)
+(** Haskell will build row-wise rules and aggregation.     *)
+(************************************************************)
 
-(* ---- Config ---- *)
-Record ContrCfg := {
-  a1_bad  : list string;  (* {A11,A14} *)
-  a3_bad  : list string;  (* {A33,A34} *)
-  a6_bad  : list string;  (* {A61,A65} *)
-  a10_req : list string;  (* require A101 by default *)
-  bad_lbl : string        (* "2" *)
-}.
+Module ContrAtom.
 
-Definition default_contr_cfg : ContrCfg :=
-  {| a1_bad  := ["A11"; "A14"];
-     a3_bad  := ["A33"; "A34"];
-     a6_bad  := ["A61"; "A65"];
-     a10_req := ["A101"];
-     bad_lbl := "2" |}.
+  (**********************************************************)
+  (** 1. Numeric comparisons on Z                          *)
+  (**********************************************************)
 
-Fixpoint str_in (x:string) (xs:list string) : bool :=
-  match xs with
-  | [] => false
-  | y::ys => if String.eqb x y then true else str_in x ys
-  end.
+  Definition num_lt  (x c : Z) : bool := Z.ltb x c.
+  Definition num_le  (x c : Z) : bool := Z.leb x c.
+  Definition num_gt  (x c : Z) : bool := Z.ltb c x.
+  Definition num_ge  (x c : Z) : bool := Z.leb c x.
+  Definition num_eq  (x c : Z) : bool := Z.eqb x c.
+  Definition num_neq (x c : Z) : bool := negb (Z.eqb x c).
 
-(* antecedent now includes a10 *)
-Definition antecedent (cfg:ContrCfg) (r:Row) : bool :=
-  str_in (a1 r) (a1_bad cfg)  &&
-  str_in (a3 r) (a3_bad cfg)  &&
-  str_in (a6 r) (a6_bad cfg)  &&
-  str_in (a10 r) (a10_req cfg).
+  (**********************************************************)
+  (** 2. Numeric membership in a finite set                *)
+  (**********************************************************)
 
-(* rule: ¬antecedent ∨ y = "2" *)
-Definition rule_contr (cfg:ContrCfg) (r:Row) : bool :=
-  negb (antecedent cfg r) || String.eqb (y r) (bad_lbl cfg).
+  Fixpoint num_in (x : Z) (xs : list Z) : bool :=
+    match xs with
+    | [] => false
+    | y :: ys => if Z.eqb x y then true else num_in x ys
+    end.
 
-Definition check_ds_contradiction_cfg (cfg:ContrCfg) (ds:list Row) : bool :=
-  forallb (rule_contr cfg) ds.
+  Definition num_not_in (x : Z) (xs : list Z) : bool :=
+    negb (num_in x xs).
 
-Definition rec_ok_contr (r:Row) : bool := rule_contr default_contr_cfg r.
+  (**********************************************************)
+  (** 3. Categorical comparisons on strings                *)
+  (**********************************************************)
 
-(* ---- Spec skeletons (admitted) ---- *)
-Lemma str_in_spec x xs : str_in x xs = true <-> In x xs. Admitted.
+  Definition cat_eq  (x label : string) : bool :=
+    String.eqb x label.
 
-Definition antecedentP (cfg:ContrCfg) (r:Row) : Prop :=
-  In (a1 r) (a1_bad cfg) /\
-  In (a3 r) (a3_bad cfg) /\
-  In (a6 r) (a6_bad cfg) /\
-  In (a10 r) (a10_req cfg).
+  Definition cat_neq (x label : string) : bool :=
+    negb (String.eqb x label).
 
-Definition contr_ok (cfg:ContrCfg) (r:Row) : Prop :=
-  (~ antecedentP cfg r) \/ (y r = bad_lbl cfg).
+  (**********************************************************)
+  (** 4. Categorical membership in a finite set            *)
+  (**********************************************************)
 
-Lemma antecedent_spec (cfg:ContrCfg) (r:Row) :
-  antecedent cfg r = true <-> antecedentP cfg r. Admitted.
+  Fixpoint cat_in (x : string) (xs : list string) : bool :=
+    match xs with
+    | [] => false
+    | y :: ys => if String.eqb x y then true else cat_in x ys
+    end.
 
-Lemma rule_contr_spec (cfg:ContrCfg) (r:Row) :
-  rule_contr cfg r = true <-> contr_ok cfg r. Admitted.
+  Definition cat_not_in (x : string) (xs : list string) : bool :=
+    negb (cat_in x xs).
 
-Lemma check_ds_contradiction_cfg_spec (cfg:ContrCfg) (ds:list Row) :
-  check_ds_contradiction_cfg cfg ds = true <-> Forall (contr_ok cfg) ds. Admitted.
+  (**********************************************************)
+  (** 5. (Later) logical specs and small lemmas            *)
+  (**********************************************************)
+
+  (* Example skeletons for later proofs; keep Admitted for now *)
+
+  Definition num_ltP (x c : Z) : Prop := x < c.
+  Definition num_leP (x c : Z) : Prop := x <= c.
+
+  Lemma num_lt_spec (x c : Z) :
+    num_lt x c = true <-> num_ltP x c.
+  Proof. Admitted.
+
+  Lemma num_le_spec (x c : Z) :
+    num_le x c = true <-> num_leP x c.
+  Proof. Admitted.
+
+End ContrAtom.

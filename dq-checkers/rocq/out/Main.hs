@@ -1,296 +1,675 @@
 module Main where
 
-import Prelude
+import System.Environment (getArgs)
+import qualified System.Process   as P
+import qualified System.Directory as Dir
+import qualified System.FilePath  as FP
 import Text.Printf (printf)
-import qualified System.Environment as Env
-import qualified System.Exit        as Exit
-import qualified Data.List          as L
-import qualified Data.Char          as C
-import qualified Data.Maybe         as M
+import Data.Char (isDigit)
+import Data.List (isPrefixOf)
 
--- Extracted Coq module
 import qualified Generated as G
 
--- ------------------------------------------------------------
--- Small utilities
--- ------------------------------------------------------------
-trim :: String -> String
-trim = L.dropWhileEnd C.isSpace . dropWhile C.isSpace
+--------------------------------------------------------------------------------
+-- Basic helpers
+--------------------------------------------------------------------------------
 
-splitCommas :: String -> [String]
-splitCommas "" = []
-splitCommas s  =
-  let (w, rest) = break (== ',') s
-  in w : case rest of [] -> []; (_:xs) -> splitCommas xs
+splitComma :: String -> [String]
+splitComma [] = [""]
+splitComma (',' : cs) = "" : rest
+  where
+    rest = splitComma cs
+splitComma (c : cs) =
+  let rest = splitComma cs
+  in (c : head rest) : tail rest
 
-readMaybeInteger :: String -> Maybe Integer
-readMaybeInteger s = case reads s of [(n,"")] -> Just n; _ -> Nothing
+readIntegerSafe :: String -> Maybe Integer
+readIntegerSafe s =
+  case reads s of
+    [(n, "")] -> Just n
+    _         -> Nothing
 
-lower :: String -> String
-lower = map C.toLower
+readIntSafe :: String -> Maybe Int
+readIntSafe s =
+  case reads s of
+    [(n, "")] -> Just n
+    _         -> Nothing
 
-isHeaderLine :: String -> Bool
-isHeaderLine ln =
-  case map lower (splitCommas ln) of
-    ("age":_) -> True
-    _         -> False
+--------------------------------------------------------------------------------
+-- Dataset handling
+--------------------------------------------------------------------------------
 
-findCol :: [String] -> String -> Maybe Int
-findCol hdr keySub =
-  let key  = lower (trim keySub)
-      norm = lower . trim
-  in L.findIndex (\h -> key `L.isInfixOf` norm h) hdr
+datasetCsvPath :: FilePath -> String -> Maybe FilePath
+datasetCsvPath rocqRoot "german-credit" =
+  Just (rocqRoot FP.</> "scripts" FP.</> "data" FP.</> "german_credit.csv")
+datasetCsvPath rocqRoot "bank-marketing" =
+  Just (rocqRoot FP.</> "scripts" FP.</> "data" FP.</> "bank_marketing.csv")
+datasetCsvPath _ _ = Nothing
 
-readHeader :: String -> [String]
-readHeader = splitCommas
+--------------------------------------------------------------------------------
+-- Range specs
+--------------------------------------------------------------------------------
 
-getAt :: [String] -> Int -> String
-getAt cs i = if i < length cs then trim (cs !! i) else ""
+data RangeSpec = RangeSpec
+  { rsAttr :: Int
+  , rsLo   :: Maybe Integer
+  , rsHi   :: Maybe Integer
+  } deriving (Show)
 
--- ------------------------------------------------------------
--- Build Row (10 fields after re-extraction with a9,a20)
---   Build_Row age balance duration a1 a3 a6 a9 a10 a20 y
--- ------------------------------------------------------------
-buildRow10 :: Integer -> Integer -> Integer
-           -> String -> String -> String
-           -> String -> String -> String
-           -> String -> G.Row
-buildRow10 a b d a1 a3 a6 a9 a10 a20 ystr =
-  G.Build_Row a b d a1 a3 a6 a9 a10 a20 ystr
+parseRangeSpec :: String -> Either String RangeSpec
+parseRangeSpec s =
+  case splitComma s of
+    [aStr, loStr, hiStr] ->
+      case readIntSafe aStr of
+        Nothing   -> Left ("Range spec: cannot parse attribute index from '" ++ aStr ++ "'")
+        Just attr ->
+          case (parseBound loStr, parseBound hiStr) of
+            (Left e, _) -> Left e
+            (_, Left e) -> Left e
+            (Right loB, Right hiB) ->
+              Right (RangeSpec attr loB hiB)
+    _ -> Left ("Range spec must be of the form 'attr,lo,hi', got: " ++ s)
+  where
+    parseBound :: String -> Either String (Maybe Integer)
+    parseBound "inf"  = Right Nothing
+    parseBound "+inf" = Right Nothing
+    parseBound "-inf" = Right Nothing
+    parseBound str =
+      case readIntegerSafe str of
+        Just n  -> Right (Just n)
+        Nothing -> Left ("Cannot parse bound as integer or inf: '" ++ str ++ "'")
 
--- Legacy (pre-a9/a20) constructor adapter: fill missing with ""
-buildRow8 :: Integer -> Integer -> Integer
-          -> String -> String -> String -> String -> String
-          -> G.Row
-buildRow8 a b d a1 a3 a6 a10 ystr =
-  buildRow10 a b d a1 a3 a6 "" a10 "" ystr
+--------------------------------------------------------------------------------
+-- Contradiction specs
+--------------------------------------------------------------------------------
 
--- ------------------------------------------------------------
--- Parsing (header-driven; with robust fallback)
--- ------------------------------------------------------------
+data NumCmpOp = OpLt | OpLe | OpGt | OpGe | OpEq | OpNeq
+  deriving (Show)
 
--- Hardened header parser: accepts "a9"/"a20" or descriptive names; falls back to
--- positional 10-column order if header info is insufficient.
-parseRowWithHeader :: [String] -> String -> Maybe G.Row
-parseRowWithHeader hdr ln =
-  let cols = map trim (splitCommas ln)
-      readZ s = case reads s of [(n,"")] -> n; _ -> 0
+data Premise
+  = PremNum { pmAttr :: Int, pmOp :: NumCmpOp, pmConst :: Integer }
+  | PremCat { pmAttr :: Int, pmLabel :: String }
+  deriving (Show)
 
-      at s = maybe "" (getAt cols) (findCol hdr s)
-      atFirst keys =
-        let vals = [ at k | k <- keys ]
-        in case filter (not . null) vals of (v:_) -> v; [] -> ""
+data ForbKind = ForbIsEq | ForbIsNeq
+  deriving (Show)
 
-      -- header-first attempt
-      a    = readZ (atFirst ["age"])
-      b    = readZ (atFirst ["balance","amount","credit amount"])
-      d    = readZ (atFirst ["duration"])
-      a1s  = map C.toUpper (atFirst ["a1","status of existing checking account"])
-      a3s  = map C.toUpper (atFirst ["a3","credit history"])
-      a6s  = map C.toUpper (atFirst ["a6","savings"])
-      a9s  = map C.toUpper (atFirst ["a9","personal_status","personal status and sex","personal status"])
-      a10s = map C.toUpper (atFirst ["a10","other debtors"])
-      a20s = map C.toUpper (atFirst ["a20","foreign","foreign worker"])
-      ys   = trim (atFirst ["y","class","risk","creditability"])
+data ContrSpec = ContrSpec
+  { csPrem      :: Premise
+  , csForbAttr  :: Int
+  , csForbKind  :: ForbKind
+  , csForbLabel :: String
+  } deriving (Show)
 
-      headerRow =
-        if null cols then Nothing
-        else Just (buildRow10 a b d a1s a3s a6s a9s a10s a20s ys)
+parseOp :: String -> Either String NumCmpOp
+parseOp "<"  = Right OpLt
+parseOp "<=" = Right OpLe
+parseOp ">"  = Right OpGt
+parseOp ">=" = Right OpGe
+parseOp "="  = Right OpEq
+parseOp "!=" = Right OpNeq
+parseOp s    = Left ("Unknown comparison operator: " ++ s)
 
-      -- positional fallback for exact 10-column rows in canonical order
-      atIx i = if i < length cols then cols !! i else ""
-      fallback10 =
-        if length cols == 10
-          then Just (buildRow10
-                (readZ (atIx 0))                 -- age
-                (readZ (atIx 1))                 -- balance
-                (readZ (atIx 2))                 -- duration
-                (map C.toUpper (atIx 3))         -- a1
-                (map C.toUpper (atIx 4))         -- a3
-                (map C.toUpper (atIx 5))         -- a6
-                (map C.toUpper (atIx 6))         -- a9
-                (map C.toUpper (atIx 7))         -- a10
-                (map C.toUpper (atIx 8))         -- a20
-                (trim (atIx 9)))                  -- y
-          else Nothing
-  in case headerRow of
-       Just r | not (null (a9s ++ a20s)) -> Just r
-       _                                 -> fallback10
+evalNumCmp :: NumCmpOp -> Integer -> Integer -> Bool
+evalNumCmp op x c =
+  case op of
+    OpLt  -> G.num_lt  x c
+    OpLe  -> G.num_le  x c
+    OpGt  -> G.num_gt  x c
+    OpGe  -> G.num_ge  x c
+    OpEq  -> G.num_eq  x c
+    OpNeq -> G.num_neq x c
 
--- Legacy “no header” parser for older CSVs (kept for compatibility)
-parseRowNoHeader :: String -> Maybe G.Row
-parseRowNoHeader ln =
-  let cols = map trim (splitCommas ln)
-      norm s = map C.toUpper (trim s)
-  in case cols of
-      [aStr, bStr, dStr, yStr] ->
-        case (readMaybeInteger aStr, readMaybeInteger bStr, readMaybeInteger dStr) of
-          (Just a, Just b, Just d) -> Just (buildRow8 a b d "" "" "" "" (trim yStr))
-          _                        -> Nothing
-      [aStr, bStr, dStr, a1s, a3s, a6s, yStr] ->
-        case (readMaybeInteger aStr, readMaybeInteger bStr, readMaybeInteger dStr) of
-          (Just a, Just b, Just d) -> Just (buildRow8 a b d (norm a1s) (norm a3s) (norm a6s) "" (trim yStr))
-          _ -> Nothing
-      [aStr, bStr, dStr, a1s, a3s, a6s, a10s, yStr] ->
-        case (readMaybeInteger aStr, readMaybeInteger bStr, readMaybeInteger dStr) of
-          (Just a, Just b, Just d) -> Just (buildRow8 a b d (norm a1s) (norm a3s) (norm a6s) (norm a10s) (trim yStr))
-          _ -> Nothing
-      [aStr, bStr, dStr, a1s, a3s, a6s, a9s, a10s, a20s, yStr] ->
-        case (readMaybeInteger aStr, readMaybeInteger bStr, readMaybeInteger dStr) of
-          (Just a, Just b, Just d) ->
-            Just (buildRow10 a b d (norm a1s) (norm a3s) (norm a6s) (norm a9s) (norm a10s) (norm a20s) (trim yStr))
-          _ -> Nothing
-      _ -> Nothing
+-- split s into (left,right) at "=>"
+splitOnArrow :: String -> Maybe (String, String)
+splitOnArrow s = go "" s
+  where
+    go _ [] = Nothing
+    go acc ('=':'>':rest) = Just (acc, rest)
+    go acc (c:cs) = go (acc ++ [c]) cs
 
-parseRow :: Maybe [String] -> String -> Maybe G.Row
-parseRow (Just hdr) = parseRowWithHeader hdr
-parseRow Nothing    = parseRowNoHeader
+-- Parse left side: numeric or categorical premise.
+--  numeric:     attr12<30, attr12>=5, ...
+--  categorical: attr7=A75
+parsePremise :: String -> Either String Premise
+parsePremise s =
+  if "attr" `isPrefixOf` s
+    then
+      let afterAttr = drop 4 s
+          (idxStr, rest) = span isDigit afterAttr
+      in if null idxStr
+           then Left ("Premise: missing attribute index in '" ++ s ++ "'")
+           else case readIntSafe idxStr of
+             Nothing   -> Left ("Premise: cannot parse attribute index from '" ++ idxStr ++ "'")
+             Just aIdx ->
+               case rest of
+                 '<':'=':cs -> parseNum aIdx "<=" cs
+                 '>':'=':cs -> parseNum aIdx ">=" cs
+                 '!':'=':cs -> parseNum aIdx "!=" cs
+                 '<':cs     -> parseNum aIdx "<"  cs
+                 '>':cs     -> parseNum aIdx ">"  cs
+                 '=':cs     -> parseEq aIdx cs
+                 _          -> Left ("Premise: cannot parse operator in '" ++ s ++ "'")
+    else Left ("Premise must start with 'attr', got: '" ++ s ++ "'")
+  where
+    parseNum :: Int -> String -> String -> Either String Premise
+    parseNum aIdx opStr cs =
+      case parseOp opStr of
+        Left e  -> Left e
+        Right op ->
+          case readIntegerSafe cs of
+            Nothing -> Left ("Premise: cannot parse numeric constant from '" ++ cs ++ "'")
+            Just c  -> Right (PremNum aIdx op c)
 
--- ------------------------------------------------------------
--- Pretty printing
--- ------------------------------------------------------------
-showRow :: G.Row -> String
-showRow r =
-  "age=" ++ show (G.age r)
-  ++ ", balance="  ++ show (G.balance r)
-  ++ ", duration=" ++ show (G.duration r)
-  ++ ", a1="       ++ show (G.a1 r)
-  ++ ", a3="       ++ show (G.a3 r)
-  ++ ", a6="       ++ show (G.a6 r)
-  ++ ", a9="       ++ show (G.a9 r)
-  ++ ", a10="      ++ show (G.a10 r)
-  ++ ", a20="      ++ show (G.a20 r)
-  ++ ", y="        ++ show (G.y r)
+    -- "=" is ambiguous: numeric or categorical.
+    parseEq :: Int -> String -> Either String Premise
+    parseEq aIdx cs =
+      case readIntegerSafe cs of
+        Just c  -> Right (PremNum aIdx OpEq c)
+        Nothing -> Right (PremCat aIdx cs)
 
--- ------------------------------------------------------------
--- Range checker
--- ------------------------------------------------------------
-okRowRange :: G.Row -> Bool
-okRowRange r = G.rec_ok_range G.default_policy r
+-- parse right side "attrY!=LABEL" or "attrY=LABEL" (categorical)
+parseForbCat :: String -> Either String (Int, ForbKind, String)
+parseForbCat s =
+  if "attr" `isPrefixOf` s
+    then
+      let afterAttr      = drop 4 s
+          (idxStr, rest) = span isDigit afterAttr
+      in if null idxStr
+           then Left ("Forbidden part: missing attribute index in '" ++ s ++ "'")
+           else case readIntSafe idxStr of
+             Nothing   -> Left ("Forbidden part: cannot parse attribute index from '" ++ idxStr ++ "'")
+             Just aIdx ->
+               case rest of
+                 '!':'=':lab ->
+                   if null lab
+                     then Left ("Forbidden part: missing label after '!=' in '" ++ s ++ "'")
+                     else Right (aIdx, ForbIsNeq, lab)
+                 '=':lab ->
+                   if null lab
+                     then Left ("Forbidden part: missing label after '=' in '" ++ s ++ "'")
+                     else Right (aIdx, ForbIsEq, lab)
+                 _ ->
+                   Left ("Forbidden part must contain '=' or '!=', got: '" ++ s ++ "'")
+    else Left ("Forbidden part must start with 'attr', got: '" ++ s ++ "'")
 
-failsRange :: [G.Row] -> [(Int, G.Row)]
-failsRange rs = [ (i,r) | (i,r) <- zip [0..] rs, not (okRowRange r) ]
+parseContrSpec :: String -> Either String ContrSpec
+parseContrSpec s =
+  case splitOnArrow s of
+    Nothing -> Left ("Contr spec must contain '=>', got: " ++ s)
+    Just (left, right) -> do
+      prem                <- parsePremise left
+      (aF, kindF, labF)   <- parseForbCat right
+      pure (ContrSpec prem aF kindF labF)
 
-summaryRange :: [G.Row] -> String
-summaryRange rows =
-  let total = length rows
-      bad   = length (failsRange rows)
-      pct   = if total == 0 then 0 else (bad * 100) `div` total
-  in case total of
-       0 -> "No data provided."
-       _ | bad == 0  -> "✅ All datapoints pass the 'RangeChecker' check."
-         | otherwise -> "❌ " ++ show bad ++ " (" ++ show pct
-                        ++ "%) datapoints did not pass the 'RangeChecker' check."
+--------------------------------------------------------------------------------
+-- Global config
+--------------------------------------------------------------------------------
 
--- ------------------------------------------------------------
--- Contradiction checker
--- ------------------------------------------------------------
-okRowContr :: G.Row -> Bool
-okRowContr r = G.rec_ok_contr r
+data Config = Config
+  { cfgDataset :: Maybe String
+  , cfgRanges  :: [RangeSpec]
+  , cfgContrs  :: [ContrSpec]
+  } deriving (Show)
 
-failsContr :: [G.Row] -> [(Int, G.Row)]
-failsContr rs = [ (i,r) | (i,r) <- zip [0..] rs, not (okRowContr r) ]
+emptyConfig :: Config
+emptyConfig = Config
+  { cfgDataset = Nothing
+  , cfgRanges  = []
+  , cfgContrs  = []
+  }
 
-summaryContr :: [G.Row] -> String
-summaryContr rows =
-  let total = length rows
-      bad   = length (failsContr rows)
-      pct   = if total == 0 then 0 else (bad * 100) `div` total
-  in case total of
-       0 -> "No data provided."
-       _ | bad == 0  -> "✅ All datapoints pass the 'ContradictionCheck' check."
-         | otherwise -> "❌ " ++ show bad ++ " (" ++ show pct
-                        ++ "%) datapoints did not pass the 'ContradictionCheck' check."
+parseArgs :: [String] -> Either String Config
+parseArgs = go emptyConfig
+  where
+    go :: Config -> [String] -> Either String Config
+    go cfg [] = Right cfg
 
--- ------------------------------------------------------------
--- Class-balance (formatted summary)
--- ------------------------------------------------------------
-summaryClassBalance :: [G.Row] -> [String]
-summaryClassBalance rows =
-  let sx    = G.sex_diag_default rows
-      fx    = G.foreign_diag_default rows
-      allOK = G.all_balance_ok_default rows
+    go cfg ("--dataset" : name : rest) =
+      go cfg{ cfgDataset = Just name } rest
 
-      nS    = G.n_total sx
-      xS    = G.x_pos sx
-      nF    = G.n_total fx
-      xF    = G.x_pos fx
+    go cfg ("--range" : spec : rest) =
+      case parseRangeSpec spec of
+        Left e  -> Left e
+        Right r -> go cfg{ cfgRanges = cfgRanges cfg ++ [r] } rest
 
-      pct a n = if n > 0 then (fromIntegral a :: Double) * 100.0 / fromIntegral n else 0.0
-      showPct d = printf "%.1f%%" d
+    go cfg ("--contr" : spec : rest) =
+      case parseContrSpec spec of
+        Left e  -> Left e
+        Right c -> go cfg{ cfgContrs = cfgContrs cfg ++ [c] } rest
 
-      outGender =
-        if nS == 0
-          then [ "Class balance – gender:"
-               , "Assumed: 50/50"
-               , "Actual: (no usable values for A91–A95 found)"
-               , "Result: fail" ]
-          else let pM = pct xS nS; pF = 100 - pM
-               in [ "Class balance – gender:"
-                  , "Assumed: 50/50"
-                  , "Actual: male " ++ showPct pM ++ " / female " ++ showPct pF
-                  , "Result: " ++ (if G.passed sx then "pass" else "fail") ]
+    go _ (flag : _) =
+      Left ("Unknown or malformed argument near: " ++ flag)
 
-      outForeign =
-        if nF == 0
-          then [ "Class balance – foreign worker:"
-               , "Assumed: 4.5/95.5"
-               , "Actual: (no usable values for A201/A202 found)"
-               , "Result: fail" ]
-          else let pY = pct xF nF; pN = 100 - pY
-               in [ "Class balance – foreign worker:"
-                  , "Assumed: 4.5/95.5"
-                  , "Actual: yes " ++ showPct pY ++ " / no " ++ showPct pN
-                  , "Result: " ++ (if G.passed fx then "pass" else "fail") ]
+--------------------------------------------------------------------------------
+-- Range checking (Coq in_range + num_le/num_ge)
+--------------------------------------------------------------------------------
 
-      header  = "Class balance checker by a standard-deviation band around the assumed proportions"
-      overall = if allOK
-                then "This dataset satisfies the class-balance conditions."
-                else "This dataset does not satisfy the class-balance conditions."
-  in [ header, "" ] ++ outGender ++ [ "" ] ++ outForeign ++ [ "", overall ]
+evalRangeSpec :: RangeSpec -> Integer -> Bool
+evalRangeSpec (RangeSpec _ loB hiB) v =
+  case (loB, hiB) of
+    (Just lo, Just hi) ->
+      G.in_range (G.Build_Range lo hi) v
+    (Just lo, Nothing) ->
+      G.num_ge v lo
+    (Nothing, Just hi) ->
+      G.num_le v hi
+    (Nothing, Nothing) ->
+      True
 
--- ------------------------------------------------------------
--- CLI
--- ------------------------------------------------------------
-usage :: IO a
-usage = do
-  putStrLn "Usage: ./run <csv-path>"
-  Exit.exitFailure
+runRangeCheck :: [String] -> [[String]] -> RangeSpec -> IO ()
+runRangeCheck headers rows spec@(RangeSpec attrIdx loB hiB) = do
+  let colIndex = attrIdx - 1
+  putStrLn "-------------------------------------------------------"
+  putStrLn $ "RANGE CHECK on attr" ++ show attrIdx
+  putStrLn "-------------------------------------------------------"
+  if colIndex < 0 || colIndex >= length headers
+    then putStrLn $ "Error: attribute index " ++ show attrIdx ++ " is out of bounds."
+    else do
+      let colName = headers !! colIndex
+      putStrLn $ "Column name:           " ++ colName
+      putStrLn $ "Range specification:   " ++ showBound loB ++ " <= x <= " ++ showBound hiB
+
+      let parseRow :: (Int, [String]) -> Either String (Integer, Int)
+          parseRow (i, cols) =
+            if length cols <= colIndex
+              then Left ("Row " ++ show i ++ ": not enough columns")
+              else
+                let s = cols !! colIndex
+                in case readIntegerSafe s of
+                     Nothing ->
+                       Left ("Row " ++ show i ++ ": cannot parse Integer from '" ++ s ++ "'")
+                     Just v ->
+                       Right (v, i)
+
+          parsed       = map parseRow (zip [0..] rows)
+          values       = [ v | Right (v, _) <- parsed ]
+          indices      = [ i | Right (_, i) <- parsed ]
+          parseErrors  = [ err | Left err <- parsed ]
+
+          totalRows    = length rows
+          parsedCount  = length values
+          withIdx      = zip indices values
+          okPairs      = [ (i,v) | (i,v) <- withIdx, evalRangeSpec spec v ]
+          badPairs     = [ (i,v) | (i,v) <- withIdx, not (evalRangeSpec spec v) ]
+
+          below        = [ (i,v) | (i,v) <- badPairs
+                                 , case loB of
+                                     Just lo -> v < lo
+                                     Nothing -> False ]
+          above        = [ (i,v) | (i,v) <- badPairs
+                                 , case hiB of
+                                     Just hi -> v > hi
+                                     Nothing -> False ]
+
+          violationCount = length badPairs
+          minVal = if null values then Nothing else Just (minimum values)
+          maxVal = if null values then Nothing else Just (maximum values)
+
+          percViol :: Double
+          percViol =
+            if parsedCount == 0
+              then 0
+              else fromIntegral violationCount * 100.0 / fromIntegral parsedCount
+
+          percPass :: Double
+          percPass = 100.0 - percViol
+
+      putStrLn ""
+      putStrLn "Summary:"
+      putStrLn $ "  Total rows:            " ++ show totalRows
+      putStrLn $ "  Parsed numeric values: " ++ show parsedCount
+      putStrLn $ "  Parse errors:          " ++ show (length parseErrors)
+
+      putStrLn ""
+      putStrLn "Column statistics (parsed values):"
+      case (minVal, maxVal) of
+        (Just mn, Just mx) -> do
+          putStrLn $ "  min:                   " ++ show mn
+          putStrLn $ "  max:                   " ++ show mx
+        _ -> putStrLn "  no values"
+
+      putStrLn ""
+      putStrLn "Range check (Coq-based):"
+      putStrLn $ "  values in range:       " ++ show (length okPairs)
+      putStrLn $ "  violations total:      " ++ show violationCount
+      putStrLn $ "    below lower bound:   " ++ show (length below)
+      putStrLn $ "    above upper bound:   " ++ show (length above)
+      putStrLn $ printf "  share in range:        %.2f%%" percPass
+      putStrLn $ printf "  share violating:       %.2f%%" percViol
+
+      if not (null parseErrors)
+        then do
+          putStrLn ""
+          putStrLn "First few parse errors:"
+          mapM_ putStrLn (take 5 parseErrors)
+        else return ()
+
+      putStrLn ""
+      putStrLn "Violating rows (index, value):"
+      if null badPairs
+        then putStrLn "  (none)"
+        else mapM_ (\(i,v) -> putStrLn $ "  " ++ show i ++ " -> " ++ show v) badPairs
+
+  where
+    showBound :: Maybe Integer -> String
+    showBound (Just x) = show x
+    showBound Nothing  = "inf"
+
+--------------------------------------------------------------------------------
+-- Contradiction checking
+--------------------------------------------------------------------------------
+
+runContrCheck :: [String] -> [[String]] -> ContrSpec -> IO ()
+runContrCheck headers rows (ContrSpec prem forbAttr forbKind forbLabel) =
+  case prem of
+    PremNum pAttr op c ->
+      runContrNumCat headers rows pAttr op c forbAttr forbKind forbLabel
+    PremCat pAttr labP ->
+      runContrCatCat headers rows pAttr labP forbAttr forbKind forbLabel
+
+runContrNumCat :: [String] -> [[String]]
+               -> Int -> NumCmpOp -> Integer
+               -> Int -> ForbKind -> String
+               -> IO ()
+runContrNumCat headers rows premAttr op c forbAttr forbKind forbLabel = do
+  let premIdx = premAttr - 1
+      forbIdx = forbAttr - 1
+
+  putStrLn "-------------------------------------------------------"
+  putStrLn "POINTWISE CONTRADICTION CHECK (numeric premise)"
+  putStrLn "-------------------------------------------------------"
+  if premIdx < 0 || premIdx >= length headers
+     || forbIdx < 0 || forbIdx >= length headers
+    then putStrLn "Error: one of the column indices is out of bounds."
+    else do
+      let premName = headers !! premIdx
+          forbName = headers !! forbIdx
+
+      putStrLn $ "Premise column:          " ++ premName ++ " (attr" ++ show premAttr ++ ")"
+      putStrLn $ "Premise:                 attr" ++ show premAttr
+                                 ++ " " ++ showOp op ++ " " ++ show c
+      putStrLn $ "Target column:           " ++ forbName ++ " (attr" ++ show forbAttr ++ ")"
+      putStrLn $ "Target label:            " ++ forbLabel
+      putStrLn ""
+      putStrLn "Interpretation: property ="
+      case forbKind of
+        ForbIsNeq ->
+          putStrLn "  if numeric premise holds, target column must NOT equal label."
+        ForbIsEq  ->
+          putStrLn "  if numeric premise holds, target column MUST equal label."
+      putStrLn "Violation condition uses Coq num_* and Coq cat_eq."
+      putStrLn ""
+
+      let parseRow :: (Int, [String]) -> Either String (Integer, String, Int)
+          parseRow (i, cols) =
+            if length cols <= premIdx || length cols <= forbIdx
+              then Left ("Row " ++ show i ++ ": not enough columns")
+              else
+                let premStr = cols !! premIdx
+                    forbStr = cols !! forbIdx
+                in case readIntegerSafe premStr of
+                     Nothing ->
+                       Left ("Row " ++ show i ++ ": cannot parse Integer from '"
+                             ++ premStr ++ "' in premise column")
+                     Just v ->
+                       Right (v, forbStr, i)
+
+          parsed      = map parseRow (zip [0..] rows)
+          triples     = [ (vP, vF, i) | Right (vP, vF, i) <- parsed ]
+          parseErrors = [ err         | Left err         <- parsed ]
+
+          totalRows   = length rows
+          parsedCount = length triples
+
+          withFlags =
+            [ (i, vP, vF, premHolds, forbEq, viol)
+            | (vP, vF, i) <- triples
+            , let premHolds = evalNumCmp op vP c
+            , let forbEq    = G.cat_eq vF forbLabel
+            , let viol      = case forbKind of
+                                ForbIsNeq -> forbEq       -- require !=, violation if equal
+                                ForbIsEq  -> not forbEq   -- require ==, violation if not equal
+            ]
+
+          premiseTrue    = [ (i,vP,vF) | (i,vP,vF,premH,_eq,_viol) <- withFlags, premH ]
+          violations     = [ (i,vP,vF) | (i,vP,vF,premH,_eq,viol)  <- withFlags, premH && viol ]
+          premiseCount   = length premiseTrue
+          violationCount = length violations
+
+          passed = null parseErrors && violationCount == 0
+
+          percViol :: Double
+          percViol =
+            if premiseCount == 0
+              then 0
+              else fromIntegral violationCount * 100.0 / fromIntegral premiseCount
+
+          percSafe :: Double
+          percSafe =
+            if premiseCount == 0
+              then 100.0
+              else 100.0 - percViol
+
+      putStrLn "Summary:"
+      putStrLn $ "  Total rows:              " ++ show totalRows
+      putStrLn $ "  Parsed rows:             " ++ show parsedCount
+      putStrLn $ "  Parse errors:            " ++ show (length parseErrors)
+      putStrLn $ "  Rows with premise true:  " ++ show premiseCount
+      putStrLn $ "  Violation rows:          " ++ show violationCount
+      putStrLn $ printf "  Among premise-true rows, share violating: %.2f%%" percViol
+      putStrLn $ printf "  Among premise-true rows, share OK:        %.2f%%" percSafe
+
+      if not (null parseErrors)
+        then do
+          putStrLn ""
+          putStrLn "First few parse errors:"
+          mapM_ putStrLn (take 5 parseErrors)
+        else return ()
+
+      putStrLn ""
+      putStrLn "Violating rows (index, premise-value, target-value):"
+      if null violations
+        then putStrLn "  (none)"
+        else mapM_ (\(i,vP,vF) ->
+                       putStrLn $ "  " ++ show i ++ " -> ("
+                                  ++ show vP ++ ", " ++ vF ++ ")")
+                   violations
+
+      putStrLn ""
+      putStrLn $ "CHECK STATUS:           " ++ (if passed then "PASS" else "FAIL")
+  where
+    showOp :: NumCmpOp -> String
+    showOp OpLt  = "<"
+    showOp OpLe  = "<="
+    showOp OpGt  = ">"
+    showOp OpGe  = ">="
+    showOp OpEq  = "="
+    showOp OpNeq = "!="
+
+runContrCatCat :: [String] -> [[String]]
+               -> Int -> String
+               -> Int -> ForbKind -> String
+               -> IO ()
+runContrCatCat headers rows premAttr premLabel forbAttr forbKind forbLabel = do
+  let premIdx = premAttr - 1
+      forbIdx = forbAttr - 1
+
+  putStrLn "-------------------------------------------------------"
+  putStrLn "POINTWISE CONTRADICTION CHECK (categorical premise)"
+  putStrLn "-------------------------------------------------------"
+  if premIdx < 0 || premIdx >= length headers
+     || forbIdx < 0 || forbIdx >= length headers
+    then putStrLn "Error: one of the column indices is out of bounds."
+    else do
+      let premName = headers !! premIdx
+          forbName = headers !! forbIdx
+
+      putStrLn $ "Premise column:          " ++ premName ++ " (attr" ++ show premAttr ++ ")"
+      putStrLn $ "Premise:                 attr" ++ show premAttr
+                                 ++ " = " ++ premLabel
+      putStrLn $ "Target column:           " ++ forbName ++ " (attr" ++ show forbAttr ++ ")"
+      putStrLn $ "Target label:            " ++ forbLabel
+      putStrLn ""
+      putStrLn "Interpretation: property ="
+      case forbKind of
+        ForbIsNeq ->
+          putStrLn "  if premise column == premLabel, target must NOT equal label."
+        ForbIsEq  ->
+          putStrLn "  if premise column == premLabel, target MUST equal label."
+      putStrLn "Violation condition uses Coq cat_eq."
+      putStrLn ""
+
+      let parseRow :: (Int, [String]) -> Either String (String, String, Int)
+          parseRow (i, cols) =
+            if length cols <= premIdx || length cols <= forbIdx
+              then Left ("Row " ++ show i ++ ": not enough columns")
+              else
+                let premStr = cols !! premIdx
+                    forbStr = cols !! forbIdx
+                in Right (premStr, forbStr, i)
+
+          parsed      = map parseRow (zip [0..] rows)
+          triples     = [ (vP, vF, i) | Right (vP, vF, i) <- parsed ]
+          parseErrors = [ err         | Left err         <- parsed ]
+
+          totalRows   = length rows
+          parsedCount = length triples
+
+          withFlags =
+            [ (i, vP, vF, premEq, forbEq, viol)
+            | (vP, vF, i) <- triples
+            , let premEq = G.cat_eq vP premLabel
+            , let forbEq = G.cat_eq vF forbLabel
+            , let viol   = case forbKind of
+                             ForbIsNeq -> forbEq      -- require !=, violation if equal
+                             ForbIsEq  -> not forbEq  -- require ==, violation if not equal
+            ]
+
+          premiseTrue    = [ (i,vP,vF) | (i,vP,vF,premEq,_eq,_viol) <- withFlags, premEq ]
+          violations     = [ (i,vP,vF) | (i,vP,vF,premEq,_eq,viol)  <- withFlags, premEq && viol ]
+          premiseCount   = length premiseTrue
+          violationCount = length violations
+
+          passed = null parseErrors && violationCount == 0
+
+          percViol :: Double
+          percViol =
+            if premiseCount == 0
+              then 0
+              else fromIntegral violationCount * 100.0 / fromIntegral premiseCount
+
+          percSafe :: Double
+          percSafe =
+            if premiseCount == 0
+              then 100.0
+              else 100.0 - percViol
+
+      putStrLn "Summary:"
+      putStrLn $ "  Total rows:              " ++ show totalRows
+      putStrLn $ "  Parsed rows:             " ++ show parsedCount
+      putStrLn $ "  Parse errors:            " ++ show (length parseErrors)
+      putStrLn $ "  Rows with premise true:  " ++ show premiseCount
+      putStrLn $ "  Violation rows:          " ++ show violationCount
+      putStrLn $ printf "  Among premise-true rows, share violating: %.2f%%" percViol
+      putStrLn $ printf "  Among premise-true rows, share OK:        %.2f%%" percSafe
+
+      if not (null parseErrors)
+        then do
+          putStrLn ""
+          putStrLn "First few parse errors:"
+          mapM_ putStrLn (take 5 parseErrors)
+        else return ()
+
+      putStrLn ""
+      putStrLn "Violating rows (index, premise-value, target-value):"
+      if null violations
+        then putStrLn "  (none)"
+        else mapM_ (\(i,vP,vF) ->
+                       putStrLn $ "  " ++ show i ++ " -> ("
+                                  ++ vP ++ ", " ++ vF ++ ")")
+                   violations
+
+      putStrLn ""
+      putStrLn $ "CHECK STATUS:           " ++ (if passed then "PASS" else "FAIL")
+
+--------------------------------------------------------------------------------
+-- Main driver
+--------------------------------------------------------------------------------
 
 main :: IO ()
 main = do
-  args <- Env.getArgs
-  case args of
-    [csvPath] -> do
-      raw <- readFile csvPath
-      let lns      = lines raw
-          mHeader  = case lns of
-                       (h:_) | isHeaderLine h -> Just (readHeader h)
-                       _                      -> Nothing
-          body     = case mHeader of
-                       Just _  -> drop 1 lns
-                       Nothing -> lns
-          rows     = M.mapMaybe (parseRow mHeader) body
+  args <- getArgs
+  case parseArgs args of
+    Left msg -> do
+      putStrLn "Error parsing arguments:"
+      putStrLn ("  " ++ msg)
+      putStrLn ""
+      printUsage
+    Right cfg -> do
+      case cfgDataset cfg of
+        Nothing -> do
+          putStrLn "No dataset specified."
+          printUsage
+        Just datasetName -> do
+          cwd <- Dir.getCurrentDirectory
+          let rocqRoot = FP.takeDirectory cwd
+              script   = rocqRoot FP.</> "scripts" FP.</> "fetch_dataset.py"
+          case datasetCsvPath rocqRoot datasetName of
+            Nothing -> putStrLn $ "Unknown dataset: " ++ datasetName
+            Just csvPath -> do
+              putStrLn "======================================================="
+              putStrLn "                      MTV CHECKER"
+              putStrLn "======================================================="
+              putStrLn $ "Dataset: " ++ datasetName
+              putStrLn ""
 
-      putStrLn (summaryRange rows)
-      putStrLn (summaryContr rows)
-      putStrLn $ "Using k = " ++ show G.standard_deviations_boundary ++ " SD"
+              putStrLn $ "Fetching dataset '" ++ datasetName ++ "' via Python..."
+              _ <- P.rawSystem "python3" [script, "--dataset", datasetName]
 
-      let badR = failsRange rows
-          badC = failsContr rows
+              putStrLn $ "Reading CSV from: " ++ csvPath
+              contents <- readFile csvPath
+              let ls = lines contents
+              case ls of
+                [] -> putStrLn "Empty CSV file."
+                (headerLine : rowLines) -> do
+                  let headers = splitComma headerLine
+                      rows    = map splitComma rowLines
 
-      if null badR && null badC
-        then pure ()
-        else do
-          if not (null badR) then do
-            putStrLn "Offending rows (RangeChecker):"
-            mapM_ (\(i,r) -> putStrLn (show i ++ ": " ++ showRow r)) badR
-          else pure ()
-          if not (null badC) then do
-            putStrLn "Offending rows (ContradictionCheck):"
-            mapM_ (\(i,r) -> putStrLn (show i ++ ": " ++ showRow r)) badC
-          else pure ()
+                  putStrLn $ "Header columns: " ++ show headers
+                  putStrLn ""
 
-      putStrLn "=== Class-balance checks (SD band; defaults from ClassBalance.v) ==="
-      mapM_ putStrLn (summaryClassBalance rows)
-    _ -> usage
+                  mapM_ (runRangeCheck headers rows) (cfgRanges cfg)
+                  mapM_ (runContrCheck headers rows) (cfgContrs cfg)
+
+                  putStrLn "======================================================="
+
+printUsage :: IO ()
+printUsage = do
+  putStrLn "Usage:"
+  putStrLn "  ./run --dataset <name> [--range \"attr,lo,hi\"]... [--contr \"...\"]..."
+  putStrLn ""
+  putStrLn "Datasets:"
+  putStrLn "  german-credit"
+  putStrLn "  bank-marketing"
+  putStrLn ""
+  putStrLn "Range checks:"
+  putStrLn "  --range \"attr,lo,hi\""
+  putStrLn "    attr : 1-based column index"
+  putStrLn "    lo   : integer or -inf"
+  putStrLn "    hi   : integer or inf"
+  putStrLn ""
+  putStrLn "Contradiction checks:"
+  putStrLn "  Numeric premise -> categorical target:"
+  putStrLn "    --contr \"attrP<k=>attrY!=LABEL\"   (require Y != LABEL)"
+  putStrLn "    --contr \"attrP<k=>attrY=LABEL\"    (require Y = LABEL)"
+  putStrLn "      Example: attr12<30=>attr17!=yes"
+  putStrLn ""
+  putStrLn "  Categorical premise -> categorical target:"
+  putStrLn "    --contr \"attrX=LAB1=>attrY!=LAB2\" (require Y != LAB2)"
+  putStrLn "    --contr \"attrX=LAB1=>attrY=LAB2\"  (require Y = LAB2)"
+  putStrLn "      Example: attr7=A75=>attr6!=A65"
+  putStrLn ""
+  putStrLn "Property semantics:"
+  putStrLn "  In all cases: if premise holds, the stated requirement on the target label"
+  putStrLn "  must hold; violation = rows where premise holds AND the requirement fails."

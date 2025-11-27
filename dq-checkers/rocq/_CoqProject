@@ -1,10 +1,10 @@
--Q theories DQ
+-Q theories DQ 
 -Q extraction DQExtract
 
 theories/Base.v
+theories/Help.v
 theories/RangeChecker.v
 theories/PointwiseContradictions.v
-theories/Checker.v
 theories/ClassBalance.v
 
 extraction/Extract.v
