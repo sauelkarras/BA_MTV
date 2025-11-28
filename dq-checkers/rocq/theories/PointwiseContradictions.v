@@ -1,5 +1,6 @@
 From Coq Require Import
      ZArith
+     ZArith.Zbool
      String
      List
      Bool.
@@ -64,20 +65,24 @@ Module ContrAtom.
     negb (cat_in x xs).
 
   (**********************************************************)
-  (** 5. (Later) logical specs and small lemmas            *)
+  (** 5. Logical specs and small lemmas                    *)
   (**********************************************************)
-
-  (* Example skeletons for later proofs; keep Admitted for now *)
 
   Definition num_ltP (x c : Z) : Prop := x < c.
   Definition num_leP (x c : Z) : Prop := x <= c.
 
   Lemma num_lt_spec (x c : Z) :
     num_lt x c = true <-> num_ltP x c.
-  Proof. Admitted.
+  Proof.
+    unfold num_lt, num_ltP.
+    apply Z.ltb_lt.
+  Qed.
 
   Lemma num_le_spec (x c : Z) :
     num_le x c = true <-> num_leP x c.
-  Proof. Admitted.
+  Proof.
+    unfold num_le, num_leP.
+    apply Z.leb_le.
+  Qed.
 
 End ContrAtom.

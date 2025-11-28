@@ -1,5 +1,6 @@
 From Coq Require Import
      ZArith
+     ZArith.Zbool
      Bool.
 
 Open Scope Z_scope.
@@ -18,5 +19,8 @@ Definition in_rangeP (rg : Range) (z : Z) : Prop :=
 Lemma in_range_spec (rg : Range) (z : Z) :
   in_range rg z = true <-> in_rangeP rg z.
 Proof.
-  (* to be proved later *)
-Admitted.
+  unfold in_range, in_rangeP.
+  rewrite andb_true_iff.
+  repeat rewrite Z.leb_le.
+  tauto.
+Qed.

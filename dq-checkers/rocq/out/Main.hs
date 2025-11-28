@@ -5,8 +5,9 @@ import qualified System.Process   as P
 import qualified System.Directory as Dir
 import qualified System.FilePath  as FP
 import Text.Printf (printf)
-import Data.Char (isDigit)
-import Data.List (isPrefixOf)
+import Data.Char (isDigit, isSpace)
+import Data.List (isPrefixOf, groupBy, sortOn)
+import Data.Function (on)
 
 import qualified Generated as G
 
@@ -35,6 +36,17 @@ readIntSafe s =
     [(n, "")] -> Just n
     _         -> Nothing
 
+readDoubleSafe :: String -> Maybe Double
+readDoubleSafe s =
+  case reads s of
+    [(d, "")] -> Just d
+    _         -> Nothing
+
+trim :: String -> String
+trim = f . f
+  where
+    f = reverse . dropWhile isSpace
+
 --------------------------------------------------------------------------------
 -- Dataset handling
 --------------------------------------------------------------------------------
@@ -45,6 +57,41 @@ datasetCsvPath rocqRoot "german-credit" =
 datasetCsvPath rocqRoot "bank-marketing" =
   Just (rocqRoot FP.</> "scripts" FP.</> "data" FP.</> "bank_marketing.csv")
 datasetCsvPath _ _ = Nothing
+
+--------------------------------------------------------------------------------
+-- UCI line parsing
+--------------------------------------------------------------------------------
+
+data UciSpec = UciSpec
+  { uciVar :: String  -- e.g. "adult"
+  , uciId  :: Int     -- e.g. 2
+  } deriving (Show)
+
+-- find the substring after "id=" if present
+findIdRest :: String -> Maybe String
+findIdRest [] = Nothing
+findIdRest ('i':'d':'=':rest) = Just rest
+findIdRest (_:cs) = findIdRest cs
+
+parseUciLine :: String -> Either String UciSpec
+parseUciLine s =
+  case break (=='=') s of
+    (lhs, '=':rhs) -> do
+      let var = trim lhs
+      if null var
+        then Left "UCI line: missing variable name on the left of '='."
+        else case findIdRest rhs of
+          Nothing ->
+            Left "UCI line: could not find 'id=' in the fetch_ucirepo call."
+          Just rest ->
+            let digits = takeWhile isDigit rest
+            in case readIntSafe digits of
+                 Nothing ->
+                   Left ("UCI line: could not parse integer id from '" ++ digits ++ "'.")
+                 Just n  ->
+                   Right (UciSpec var n)
+    _ ->
+      Left "UCI line must contain a single '=' separating variable and fetch_ucirepo call."
 
 --------------------------------------------------------------------------------
 -- Range specs
@@ -203,20 +250,51 @@ parseContrSpec s =
       pure (ContrSpec prem aF kindF labF)
 
 --------------------------------------------------------------------------------
+-- Class balance specs
+--------------------------------------------------------------------------------
+
+data ClassSpec = ClassSpec
+  { cbAttrIdx    :: Int
+  , cbLabel      :: String
+  , cbExpShare   :: Double
+  , cbTolerance  :: Double
+  } deriving (Show)
+
+parseClassSpec :: String -> Either String ClassSpec
+parseClassSpec s =
+  case splitComma s of
+    [aStr, labStr, expStr, tolStr] -> do
+      attr <- case readIntSafe aStr of
+                Nothing -> Left ("Class spec: cannot parse attribute index from '" ++ aStr ++ "'")
+                Just a  -> Right a
+      expS <- case readDoubleSafe expStr of
+                Nothing -> Left ("Class spec: cannot parse expected share from '" ++ expStr ++ "'")
+                Just d  -> Right d
+      tol  <- case readDoubleSafe tolStr of
+                Nothing -> Left ("Class spec: cannot parse tolerance from '" ++ tolStr ++ "'")
+                Just d  -> Right d
+      pure (ClassSpec attr labStr expS tol)
+    _ -> Left ("Class spec must be of the form 'attr,label,expected_share,tolerance', got: " ++ s)
+
+--------------------------------------------------------------------------------
 -- Global config
 --------------------------------------------------------------------------------
 
 data Config = Config
-  { cfgDataset :: Maybe String
+  { cfgDataset :: Maybe String   -- legacy named dataset
+  , cfgUci     :: Maybe UciSpec  -- generic UCI source
   , cfgRanges  :: [RangeSpec]
   , cfgContrs  :: [ContrSpec]
+  , cfgClasses :: [ClassSpec]
   } deriving (Show)
 
 emptyConfig :: Config
 emptyConfig = Config
   { cfgDataset = Nothing
+  , cfgUci     = Nothing
   , cfgRanges  = []
   , cfgContrs  = []
+  , cfgClasses = []
   }
 
 parseArgs :: [String] -> Either String Config
@@ -225,21 +303,43 @@ parseArgs = go emptyConfig
     go :: Config -> [String] -> Either String Config
     go cfg [] = Right cfg
 
+    -- named dataset mode
     go cfg ("--dataset" : name : rest) =
-      go cfg{ cfgDataset = Just name } rest
+      case cfgUci cfg of
+        Just _  -> Left "Cannot use --dataset and --uci-line together."
+        Nothing -> go cfg{ cfgDataset = Just name } rest
 
+    -- generic UCI mode
+    go cfg ("--uci-line" : line : rest) =
+      case parseUciLine line of
+        Left e  -> Left e
+        Right u ->
+          case cfgDataset cfg of
+            Just _  -> Left "Cannot use --dataset and --uci-line together."
+            Nothing -> go cfg{ cfgUci = Just u } rest
+
+    -- range specs
     go cfg ("--range" : spec : rest) =
       case parseRangeSpec spec of
         Left e  -> Left e
         Right r -> go cfg{ cfgRanges = cfgRanges cfg ++ [r] } rest
 
+    -- contradiction specs
     go cfg ("--contr" : spec : rest) =
       case parseContrSpec spec of
         Left e  -> Left e
         Right c -> go cfg{ cfgContrs = cfgContrs cfg ++ [c] } rest
 
+    -- class balance specs
+    go cfg ("--class" : spec : rest) =
+      case parseClassSpec spec of
+        Left e  -> Left e
+        Right c -> go cfg{ cfgClasses = cfgClasses cfg ++ [c] } rest
+
+    -- unknown flag
     go _ (flag : _) =
       Left ("Unknown or malformed argument near: " ++ flag)
+
 
 --------------------------------------------------------------------------------
 -- Range checking (Coq in_range + num_le/num_ge)
@@ -594,6 +694,122 @@ runContrCatCat headers rows premAttr premLabel forbAttr forbKind forbLabel = do
       putStrLn $ "CHECK STATUS:           " ++ (if passed then "PASS" else "FAIL")
 
 --------------------------------------------------------------------------------
+-- Class balance checking (Haskell aggregation, string column)
+--------------------------------------------------------------------------------
+
+runClassCheck :: [String] -> [[String]] -> ClassSpec -> IO ()
+runClassCheck headers rows (ClassSpec attrIdx lab expShare tol) = do
+  let colIndex = attrIdx - 1
+  putStrLn "-------------------------------------------------------"
+  putStrLn "CLASS BALANCE CHECK"
+  putStrLn "-------------------------------------------------------"
+  if colIndex < 0 || colIndex >= length headers
+    then putStrLn $ "Error: attribute index " ++ show attrIdx ++ " is out of bounds."
+    else do
+      let colName    = headers !! colIndex
+          indexed    = zip [0..] rows
+          validRows  = [ (i, cols !! colIndex)
+                      | (i, cols) <- indexed
+                      , length cols > colIndex
+                      ]
+          totalRows  = length validRows
+          posRows    = [ (i,v) | (i,v) <- validRows, v == lab ]
+          posCount   = length posRows
+          share      =
+            if totalRows == 0
+              then 0
+              else fromIntegral posCount / fromIntegral totalRows
+          diff       = abs (share - expShare)
+          passed     = diff <= tol
+
+      putStrLn $ "Column (attr):          " ++ colName ++ " (attr" ++ show attrIdx ++ ")"
+      putStrLn $ "Label of interest:      " ++ lab
+      putStrLn $ printf "Expected share:         %.4f" expShare
+      putStrLn $ printf "Tolerance:              %.4f" tol
+      putStrLn ""
+
+      putStrLn "Summary:"
+      putStrLn $ "  Total usable rows:     " ++ show totalRows
+      putStrLn $ "  Count of label:        " ++ show posCount
+      putStrLn $ printf "  Observed share:        %.4f" share
+      putStrLn $ printf "  Absolute deviation:    %.4f" diff
+      putStrLn ""
+      putStrLn $ "CHECK STATUS:           " ++ (if passed then "PASS" else "FAIL")
+
+      putStrLn ""
+      putStrLn "First few rows with the label (index, value):"
+      if null posRows
+        then putStrLn "  (none)"
+        else mapM_ (\(i,v) -> putStrLn $ "  " ++ show i ++ " -> " ++ v)
+                   (take 20 posRows)
+
+--------------------------------------------------------------------------------
+-- Grouped class-balance overview
+--------------------------------------------------------------------------------
+
+runAllClassChecks :: [String] -> [[String]] -> [ClassSpec] -> IO ()
+runAllClassChecks _ _ [] = return ()
+runAllClassChecks headers rows specs = do
+  let grouped = groupBy ((==) `on` cbAttrIdx) (sortOn cbAttrIdx specs)
+  mapM_ (runGroup headers rows) grouped
+  where
+    runGroup :: [String] -> [[String]] -> [ClassSpec] -> IO ()
+    runGroup _ _ [] = return ()
+    runGroup hs rs specsForAttr@(spec0:_) = do
+      let attr     = cbAttrIdx spec0
+          colIndex = attr - 1
+
+      putStrLn "-------------------------------------------------------"
+      putStrLn "CLASS BALANCE OVERVIEW"
+      putStrLn "-------------------------------------------------------"
+
+      if colIndex < 0 || colIndex >= length hs
+        then putStrLn $ "Error: attribute index " ++ show attr ++ " is out of bounds."
+        else do
+          let colName   = hs !! colIndex
+              indexed   = zip [0..] rs
+              validRows = [ (i, cols !! colIndex)
+                          | (i, cols) <- indexed
+                          , length cols > colIndex
+                          ]
+              totalRows = length validRows
+
+          putStrLn $ "Column (attr):          " ++ colName ++ " (attr" ++ show attr ++ ")"
+          putStrLn $ "Total usable rows:      " ++ show totalRows
+          putStrLn ""
+          putStrLn "Per-label targets:"
+
+          let compute spec =
+                let lab    = cbLabel spec
+                    hits   = [ () | (_,v) <- validRows, v == lab ]
+                    c      = length hits
+                    share  = if totalRows == 0
+                               then 0
+                               else fromIntegral c / fromIntegral totalRows
+                    diff   = abs (share - cbExpShare spec)
+                    passed = diff <= cbTolerance spec
+                in (spec, c, share, diff, passed)
+
+              results = map compute specsForAttr
+              anyFail = any (\(_,_,_,_,p) -> not p) results
+
+          mapM_ (\(spec,c,share,diff,passed) -> do
+                    putStrLn $ "  Label:                " ++ cbLabel spec
+                    putStrLn $ printf "    expected:           %.4f ± %.4f"
+                                      (cbExpShare spec) (cbTolerance spec)
+                    putStrLn $ printf "    observed:           %.4f (%d rows)" share c
+                    putStrLn $ printf "    deviation:          %.4f" diff
+                    putStrLn $ "    status:             " ++ (if passed then "PASS" else "FAIL")
+                 ) results
+
+          putStrLn ""
+          putStrLn $ "OVERVIEW STATUS:       " ++ (if anyFail then "FAIL" else "PASS")
+          putStrLn ""
+
+          -- Detailed per-label checks as before
+          mapM_ (runClassCheck hs rs) specsForAttr
+
+--------------------------------------------------------------------------------
 -- Main driver
 --------------------------------------------------------------------------------
 
@@ -607,11 +823,12 @@ main = do
       putStrLn ""
       printUsage
     Right cfg -> do
-      case cfgDataset cfg of
-        Nothing -> do
+      case (cfgDataset cfg, cfgUci cfg) of
+        (Nothing, Nothing) -> do
           putStrLn "No dataset specified."
           printUsage
-        Just datasetName -> do
+
+        (Just datasetName, Nothing) -> do
           cwd <- Dir.getCurrentDirectory
           let rocqRoot = FP.takeDirectory cwd
               script   = rocqRoot FP.</> "scripts" FP.</> "fetch_dataset.py"
@@ -639,19 +856,67 @@ main = do
                   putStrLn $ "Header columns: " ++ show headers
                   putStrLn ""
 
-                  mapM_ (runRangeCheck headers rows) (cfgRanges cfg)
-                  mapM_ (runContrCheck headers rows) (cfgContrs cfg)
+                  mapM_ (runRangeCheck  headers rows) (cfgRanges  cfg)
+                  mapM_ (runContrCheck  headers rows) (cfgContrs  cfg)
+                  runAllClassChecks headers rows (cfgClasses cfg)
 
                   putStrLn "======================================================="
+
+        (Nothing, Just uci) -> do
+          cwd <- Dir.getCurrentDirectory
+          let rocqRoot = FP.takeDirectory cwd
+              script   = rocqRoot FP.</> "scripts" FP.</> "fetch_dataset.py"
+              baseName = uciVar uci
+              csvPath  = rocqRoot FP.</> "scripts" FP.</> "data" FP.</> (baseName ++ ".csv")
+
+          putStrLn "======================================================="
+          putStrLn "                      MTV CHECKER"
+          putStrLn "======================================================="
+          putStrLn $ "Dataset (UCI): " ++ baseName
+                     ++ " (id=" ++ show (uciId uci) ++ ")"
+          putStrLn ""
+
+          putStrLn $ "Fetching dataset via Python (id="
+                     ++ show (uciId uci) ++ ", name='" ++ baseName ++ "')..."
+          _ <- P.rawSystem "python3"
+                 [script, "--uci-id", show (uciId uci), "--uci-name", baseName]
+
+          putStrLn $ "Reading CSV from: " ++ csvPath
+          contents <- readFile csvPath
+          let ls = lines contents
+          case ls of
+            [] -> putStrLn "Empty CSV file."
+            (headerLine : rowLines) -> do
+              let headers = splitComma headerLine
+                  rows    = map splitComma rowLines
+
+              putStrLn $ "Header columns: " ++ show headers
+              putStrLn ""
+
+              mapM_ (runRangeCheck  headers rows) (cfgRanges  cfg)
+              mapM_ (runContrCheck  headers rows) (cfgContrs  cfg)
+              runAllClassChecks headers rows (cfgClasses cfg)
+
+              putStrLn "======================================================="
+
+        (Just _, Just _) -> do
+          -- Should be ruled out by parseArgs, but keep a guard.
+          putStrLn "Internal error: both dataset and UCI source set."
 
 printUsage :: IO ()
 printUsage = do
   putStrLn "Usage:"
-  putStrLn "  ./run --dataset <name> [--range \"attr,lo,hi\"]... [--contr \"...\"]..."
+  putStrLn "  ./run --dataset <name> [--range \"attr,lo,hi\"]... [--contr \"...\"]... [--class \"...\"]..."
+  putStrLn "  ./run --uci-line \"var = fetch_ucirepo(id=N)\" [--range ...] [--contr ...] [--class ...]"
   putStrLn ""
-  putStrLn "Datasets:"
+  putStrLn "Datasets (named mode):"
   putStrLn "  german-credit"
   putStrLn "  bank-marketing"
+  putStrLn ""
+  putStrLn "Generic UCI mode:"
+  putStrLn "  --uci-line \"adult = fetch_ucirepo(id=2)\""
+  putStrLn "    var : variable name (used as CSV base name)"
+  putStrLn "    id  : UCI id passed to fetch_ucirepo(id=...)"
   putStrLn ""
   putStrLn "Range checks:"
   putStrLn "  --range \"attr,lo,hi\""
@@ -663,13 +928,20 @@ printUsage = do
   putStrLn "  Numeric premise -> categorical target:"
   putStrLn "    --contr \"attrP<k=>attrY!=LABEL\"   (require Y != LABEL)"
   putStrLn "    --contr \"attrP<k=>attrY=LABEL\"    (require Y = LABEL)"
-  putStrLn "      Example: attr12<30=>attr17!=yes"
   putStrLn ""
   putStrLn "  Categorical premise -> categorical target:"
   putStrLn "    --contr \"attrX=LAB1=>attrY!=LAB2\" (require Y != LAB2)"
   putStrLn "    --contr \"attrX=LAB1=>attrY=LAB2\"  (require Y = LAB2)"
-  putStrLn "      Example: attr7=A75=>attr6!=A65"
+  putStrLn ""
+  putStrLn "Class-balance checks (binary-style):"
+  putStrLn "  --class \"attr,label,expected_share,tolerance\""
+  putStrLn "    attr           : 1-based column index"
+  putStrLn "    label          : the class label to track"
+  putStrLn "    expected_share : in [0,1], e.g. 0.5"
+  putStrLn "    tolerance      : non-negative, e.g. 0.1"
+  putStrLn "  You can repeat --class for the same column to get a combined overview."
   putStrLn ""
   putStrLn "Property semantics:"
-  putStrLn "  In all cases: if premise holds, the stated requirement on the target label"
-  putStrLn "  must hold; violation = rows where premise holds AND the requirement fails."
+  putStrLn "  Range:      values must lie in the given interval (with Coq comparators)."
+  putStrLn "  Contradict: if premise holds, the stated requirement on target label must hold."
+  putStrLn "  Class:      observed share of the label must be within [expected_share±tolerance]."
