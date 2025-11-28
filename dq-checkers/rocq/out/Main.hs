@@ -360,9 +360,9 @@ evalRangeSpec (RangeSpec _ loB hiB) v =
 runRangeCheck :: [String] -> [[String]] -> RangeSpec -> IO ()
 runRangeCheck headers rows spec@(RangeSpec attrIdx loB hiB) = do
   let colIndex = attrIdx - 1
-  putStrLn "-------------------------------------------------------"
+  putStrLn "-------------------------------------------------"
   putStrLn $ "RANGE CHECK on attr" ++ show attrIdx
-  putStrLn "-------------------------------------------------------"
+  putStrLn "-------------------------------------------------"
   if colIndex < 0 || colIndex >= length headers
     then putStrLn $ "Error: attribute index " ++ show attrIdx ++ " is out of bounds."
     else do
@@ -476,9 +476,9 @@ runContrNumCat headers rows premAttr op c forbAttr forbKind forbLabel = do
   let premIdx = premAttr - 1
       forbIdx = forbAttr - 1
 
-  putStrLn "-------------------------------------------------------"
+  putStrLn "-------------------------------------------------"
   putStrLn "POINTWISE CONTRADICTION CHECK (numeric premise)"
-  putStrLn "-------------------------------------------------------"
+  putStrLn "-------------------------------------------------"
   if premIdx < 0 || premIdx >= length headers
      || forbIdx < 0 || forbIdx >= length headers
     then putStrLn "Error: one of the column indices is out of bounds."
@@ -595,9 +595,9 @@ runContrCatCat headers rows premAttr premLabel forbAttr forbKind forbLabel = do
   let premIdx = premAttr - 1
       forbIdx = forbAttr - 1
 
-  putStrLn "-------------------------------------------------------"
+  putStrLn "-------------------------------------------------"
   putStrLn "POINTWISE CONTRADICTION CHECK (categorical premise)"
-  putStrLn "-------------------------------------------------------"
+  putStrLn "-------------------------------------------------"
   if premIdx < 0 || premIdx >= length headers
      || forbIdx < 0 || forbIdx >= length headers
     then putStrLn "Error: one of the column indices is out of bounds."
@@ -700,9 +700,9 @@ runContrCatCat headers rows premAttr premLabel forbAttr forbKind forbLabel = do
 runClassCheck :: [String] -> [[String]] -> ClassSpec -> IO ()
 runClassCheck headers rows (ClassSpec attrIdx lab expShare tol) = do
   let colIndex = attrIdx - 1
-  putStrLn "-------------------------------------------------------"
+  putStrLn "-------------------------------------------------"
   putStrLn "CLASS BALANCE CHECK"
-  putStrLn "-------------------------------------------------------"
+  putStrLn "-------------------------------------------------"
   if colIndex < 0 || colIndex >= length headers
     then putStrLn $ "Error: attribute index " ++ show attrIdx ++ " is out of bounds."
     else do
@@ -759,9 +759,9 @@ runAllClassChecks headers rows specs = do
       let attr     = cbAttrIdx spec0
           colIndex = attr - 1
 
-      putStrLn "-------------------------------------------------------"
+      putStrLn "-------------------------------------------------"
       putStrLn "CLASS BALANCE OVERVIEW"
-      putStrLn "-------------------------------------------------------"
+      putStrLn "-------------------------------------------------"
 
       if colIndex < 0 || colIndex >= length hs
         then putStrLn $ "Error: attribute index " ++ show attr ++ " is out of bounds."
@@ -835,9 +835,9 @@ main = do
           case datasetCsvPath rocqRoot datasetName of
             Nothing -> putStrLn $ "Unknown dataset: " ++ datasetName
             Just csvPath -> do
-              putStrLn "======================================================="
-              putStrLn "                      MTV CHECKER"
-              putStrLn "======================================================="
+              putStrLn "================================================"
+              putStrLn "                  MTV CHECKER"
+              putStrLn "================================================"
               putStrLn $ "Dataset: " ++ datasetName
               putStrLn ""
 
@@ -860,7 +860,7 @@ main = do
                   mapM_ (runContrCheck  headers rows) (cfgContrs  cfg)
                   runAllClassChecks headers rows (cfgClasses cfg)
 
-                  putStrLn "======================================================="
+                  putStrLn "================================================"
 
         (Nothing, Just uci) -> do
           cwd <- Dir.getCurrentDirectory
@@ -869,9 +869,9 @@ main = do
               baseName = uciVar uci
               csvPath  = rocqRoot FP.</> "scripts" FP.</> "data" FP.</> (baseName ++ ".csv")
 
-          putStrLn "======================================================="
-          putStrLn "                      MTV CHECKER"
-          putStrLn "======================================================="
+          putStrLn "================================================"
+          putStrLn "                  MTV CHECKER"
+          putStrLn "================================================"
           putStrLn $ "Dataset (UCI): " ++ baseName
                      ++ " (id=" ++ show (uciId uci) ++ ")"
           putStrLn ""
@@ -897,7 +897,7 @@ main = do
               mapM_ (runContrCheck  headers rows) (cfgContrs  cfg)
               runAllClassChecks headers rows (cfgClasses cfg)
 
-              putStrLn "======================================================="
+              putStrLn "================================================"
 
         (Just _, Just _) -> do
           -- Should be ruled out by parseArgs, but keep a guard.

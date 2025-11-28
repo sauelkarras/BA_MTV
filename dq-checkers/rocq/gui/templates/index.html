@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MTV Checker GUI</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --bg-alt: #020617;
+      --card: #111827;
+      --accent: #38bdf8;
+      --accent-soft: rgba(56, 189, 248, 0.1);
+      --text-main: #e5e7eb;
+      --text-muted: #9ca3af;
+      --border-soft: #1f2937;
+      --error: #f97373;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+                   sans-serif;
+      background: radial-gradient(circle at top, #1f2937 0, #020617 55%);
+      color: var(--text-main);
+      min-height: 100vh;
+    }
+
+    .page {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem 3rem;
+    }
+
+    h1 {
+      font-size: 1.9rem;
+      margin: 0 0 0.25rem;
+      font-weight: 650;
+      letter-spacing: 0.03em;
+    }
+
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      margin-bottom: 1.75rem;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 900px) {
+      .layout {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    .card {
+      background: linear-gradient(145deg, #020617, #020617);
+      border-radius: 1rem;
+      border: 1px solid var(--border-soft);
+      padding: 1.25rem 1.4rem;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+    }
+
+    .card h2 {
+      font-size: 1.15rem;
+      margin: 0 0 0.75rem;
+      font-weight: 600;
+    }
+
+    .hint {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin-bottom: 0.9rem;
+    }
+
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .section-header small {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .fieldset {
+      border-top: 1px solid var(--border-soft);
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+    }
+
+    .field-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .field {
+      flex: 1 1 0;
+      min-width: 130px;
+    }
+
+    .field label {
+      display: block;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-bottom: 0.25rem;
+    }
+
+    .field input,
+    .field select,
+    .field textarea {
+      width: 100%;
+      border-radius: 0.55rem;
+      border: 1px solid var(--border-soft);
+      padding: 0.45rem 0.6rem;
+      background: #020617;
+      color: var(--text-main);
+      font-size: 0.86rem;
+      outline: none;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease,
+                  background-color 0.15s ease;
+    }
+
+    .field input::placeholder,
+    .field textarea::placeholder {
+      color: #4b5563;
+    }
+
+    .field input:focus,
+    .field select:focus,
+    .field textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35);
+      background: #020617;
+    }
+
+    .small-label {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin: 0.15rem 0 0.4rem;
+    }
+
+    .chips {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.2rem;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.18rem 0.5rem;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid var(--border-soft);
+    }
+
+    .chip strong {
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    .repeat-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      margin-bottom: 0.2rem;
+    }
+
+    .repeat-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      padding: 0.5rem;
+      border-radius: 0.6rem;
+      background: rgba(15, 23, 42, 0.7);
+      border: 1px dashed #1f2937;
+    }
+
+    .repeat-row .field {
+      min-width: 110px;
+      flex: 1 1 0;
+    }
+
+    .remove-btn {
+      align-self: flex-end;
+      height: 32px;
+      border-radius: 999px;
+      border: none;
+      padding: 0 0.75rem;
+      font-size: 0.8rem;
+      background: rgba(248, 113, 113, 0.08);
+      color: #fecaca;
+      cursor: pointer;
+      transition: background 0.15s ease, transform 0.1s ease;
+    }
+
+    .remove-btn:hover {
+      background: rgba(248, 113, 113, 0.18);
+      transform: translateY(-1px);
+    }
+
+    .add-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      border-radius: 999px;
+      border: 1px dashed rgba(148, 163, 184, 0.6);
+      background: rgba(15, 23, 42, 0.85);
+      color: var(--text-muted);
+      padding: 0.3rem 0.7rem;
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+
+    .add-btn:hover {
+      background: rgba(15, 23, 42, 0.95);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .add-btn span.symbol {
+      font-size: 1rem;
+      line-height: 1;
+    }
+
+    .btn-primary {
+      margin-top: 1rem;
+      width: 100%;
+      border-radius: 0.7rem;
+      border: none;
+      padding: 0.7rem 1rem;
+      font-size: 0.95rem;
+      font-weight: 550;
+      background: linear-gradient(135deg, #38bdf8, #0ea5e9);
+      color: #0b1120;
+      cursor: pointer;
+      box-shadow: 0 14px 30px rgba(8, 47, 73, 0.7);
+      transition: transform 0.1s ease, box-shadow 0.1s ease;
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 18px 40px rgba(8, 47, 73, 0.85);
+    }
+
+    .btn-primary:active {
+      transform: translateY(0);
+      box-shadow: 0 12px 24px rgba(8, 47, 73, 0.7);
+    }
+
+    .progress-container {
+      margin-top: 0.85rem;
+      padding: 0.55rem 0.7rem 0.65rem;
+      border-radius: 0.75rem;
+      background: radial-gradient(circle at top left,
+                                 rgba(56, 189, 248, 0.13),
+                                 rgba(15, 23, 42, 0.95));
+      border: 1px solid rgba(56, 189, 248, 0.27);
+    }
+
+    .progress-label {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-bottom: 0.35rem;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.95);
+      overflow: hidden;
+      border: 1px solid rgba(30, 64, 175, 0.7);
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #38bdf8, #22c55e);
+      transition: width 0.4s ease;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .output-card {
+      background: radial-gradient(circle at top left,
+                                  rgba(37, 99, 235, 0.15),
+                                  rgba(15, 23, 42, 1));
+      border-radius: 0.75rem;
+      border: 1px solid #1f2937;
+      padding: 0.7rem 0.8rem;
+      font-size: 0.8rem;
+    }
+
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+                   "Liberation Mono", "Courier New", monospace;
+      font-size: 0.78rem;
+      line-height: 1.35;
+    }
+
+    code {
+      font-family: inherit;
+      background: rgba(15, 23, 42, 0.9);
+      padding: 0.05rem 0.28rem;
+      border-radius: 0.35rem;
+      border: 1px solid #1f2937;
+    }
+
+    .stderr {
+      margin-top: 0.5rem;
+      color: var(--error);
+    }
+
+    .error-box {
+      border-radius: 0.6rem;
+      padding: 0.5rem 0.7rem;
+      background: rgba(248, 113, 113, 0.08);
+      border: 1px solid rgba(248, 113, 113, 0.4);
+      color: #fecaca;
+      font-size: 0.8rem;
+      margin-bottom: 0.7rem;
+    }
+
+    .cli-preview {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-bottom: 0.35rem;
+    }
+
+    .cli-preview code {
+      white-space: pre-wrap;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      font-size: 0.75rem;
+      padding: 0.15rem 0.45rem;
+      border-radius: 999px;
+      border: 1px solid #1d4ed8;
+      color: #bfdbfe;
+      background: rgba(37, 99, 235, 0.15);
+    }
+
+    .tag-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: #22c55e;
+    }
+
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:0.75rem;margin-bottom:1.2rem;">
+      <div>
+        <h1>MTV Checker GUI</h1>
+        <div class="subtitle">
+          Build a command-line call interactively and run your
+          Rocq/Haskell-based MTV checker on UCI datasets.
+        </div>
+      </div>
+      <div class="tag">
+        <span class="tag-dot"></span>
+        <span>CLI-backed</span>
+      </div>
+    </div>
+
+    <div class="layout">
+      <!-- Left: configuration form -->
+      <form id="checker-form" method="POST" class="card">
+
+        <!-- Dataset selection -->
+        <h2>Dataset selection</h2>
+        <div class="hint">
+          Use either a named dataset (German Credit / Bank Marketing)
+          or a generic UCI line (e.g. <code>adult = fetch_ucirepo(id=2)</code>).
+        </div>
+
+        <div class="fieldset">
+          <div class="field-row">
+            <div class="field">
+              <label for="dataset-select">Named dataset</label>
+              <select id="dataset-select" name="dataset">
+                <option value="">– choose dataset –</option>
+                <option value="german-credit">german-credit (id=144)</option>
+                <option value="bank-marketing">bank-marketing (id=222)</option>
+              </select>
+              <p class="small-label">
+                Matches the CLI flag <code>--dataset &lt;name&gt;</code>.
+              </p>
+            </div>
+
+            <div class="field">
+              <label for="uci-line-input">Generic UCI (optional)</label>
+              <input
+                id="uci-line-input"
+                name="uci_line"
+                type="text"
+                placeholder="adult = fetch_ucirepo(id=2)"
+              />
+              <p class="small-label">
+                Parsed into <code>--uci-line "var = fetch_ucirepo(id=N)"</code>.
+              </p>
+            </div>
+          </div>
+          <div class="chips">
+            <span class="chip">
+              <strong>Note</strong>
+              <span>Do not set both at once: the tool enforces mutual exclusion.</span>
+            </span>
+          </div>
+        </div>
+
+        <!-- Range checks -->
+        <div class="fieldset">
+          <div class="section-header">
+            <h2 style="margin-bottom:0;">Range checks</h2>
+            <small>Closed interval per column, using Coq <code>in_range</code>.</small>
+          </div>
+          <div class="hint">
+            Each check is of the form
+            <code>attr,lo,hi</code>, e.g. <code>13,18,60</code> or
+            <code>2,0,inf</code>. The GUI will generate
+            <code>--range</code> flags accordingly.
+          </div>
+
+          <div class="repeat-list" id="range-list"></div>
+
+          <button type="button" class="add-btn" id="add-range-btn">
+            <span class="symbol">+</span>
+            <span>Add range check</span>
+          </button>
+        </div>
+
+        <!-- Contradiction checks -->
+        <div class="fieldset">
+          <div class="section-header">
+            <h2 style="margin-bottom:0;">Pointwise contradictions</h2>
+            <small>Premise ⇒ conclusion on two attributes.</small>
+          </div>
+          <div class="hint">
+            Numeric premise example:
+            <code>attr1 &gt; 70</code> and target
+            <code>attr2 = retired</code> gives
+            <code>attr1&gt;70=&gt;attr2=retired</code>.<br />
+            Categorical premise example:
+            <code>attr7 = A75</code> and
+            <code>attr6 != A65</code> gives
+            <code>attr7=A75=&gt;attr6!=A65</code>.
+          </div>
+
+          <div class="repeat-list" id="contr-list"></div>
+
+          <button type="button" class="add-btn" id="add-contr-btn">
+            <span class="symbol">+</span>
+            <span>Add contradiction rule</span>
+          </button>
+        </div>
+
+        <!-- Class-balance checks -->
+        <div class="fieldset">
+          <div class="section-header">
+            <h2 style="margin-bottom:0;">Class balance</h2>
+            <small>Per-label expected share with tolerance.</small>
+          </div>
+          <div class="hint">
+            Each entry is turned into
+            <code>--class "attr,label,expected_share,tolerance"</code>.
+            Example: <code>21,1,0.5,0.1</code> on German Credit's class
+            column.
+          </div>
+
+          <div class="repeat-list" id="class-list"></div>
+
+          <button type="button" class="add-btn" id="add-class-btn">
+            <span class="symbol">+</span>
+            <span>Add class-balance spec</span>
+          </button>
+        </div>
+
+        <!-- Hidden textareas used to send specs to Flask/Haskell -->
+        <textarea id="ranges-hidden" name="ranges" style="display:none;"></textarea>
+        <textarea id="contrs-hidden" name="contrs" style="display:none;"></textarea>
+        <textarea id="classes-hidden" name="classes" style="display:none;"></textarea>
+
+        <!-- Submit + progress -->
+        <button type="submit" class="btn-primary">Run MTV checker</button>
+
+        <div id="progress-container" class="progress-container hidden">
+          <div id="progress-label" class="progress-label">
+            Preparing MTV checker call…
+          </div>
+          <div class="progress-bar">
+            <div id="progress-fill" class="progress-fill"></div>
+          </div>
+        </div>
+
+      </form>
+
+      <!-- Right: output panel -->
+      <div class="card">
+        <h2>Output</h2>
+        <div class="hint">
+          This shows the exact CLI call and the terminal output of
+          <code>./run</code> from your Rocq/Haskell checker.
+        </div>
+
+        {% if error_msg %}
+        <div class="error-box">
+          <strong>Web-level error:</strong>
+          <span>{{ error_msg }}</span>
+        </div>
+        {% endif %}
+
+        {% if cli_preview %}
+        <div class="cli-preview">
+          Command executed:
+          <code>{{ cli_preview }}</code>
+        </div>
+        {% endif %}
+
+        {% if stdout or stderr %}
+        <div class="output-card">
+          {% if stdout %}
+          <pre>{{ stdout }}</pre>
+          {% endif %}
+          {% if stderr %}
+          <div class="stderr">
+            <strong>stderr from ./run:</strong>
+            <pre>{{ stderr }}</pre>
+          </div>
+          {% endif %}
+        </div>
+        {% else %}
+        <div class="output-card">
+          <pre>No MTV checker run yet. Configure a dataset and checks on the left and press “Run MTV checker”.</pre>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById("checker-form");
+    const datasetSelect = document.getElementById("dataset-select");
+    const uciInput = document.getElementById("uci-line-input");
+
+    const rangeList = document.getElementById("range-list");
+    const contrList = document.getElementById("contr-list");
+    const classList = document.getElementById("class-list");
+
+    const rangesHidden = document.getElementById("ranges-hidden");
+    const contrsHidden = document.getElementById("contrs-hidden");
+    const classesHidden = document.getElementById("classes-hidden");
+
+    const progressContainer = document.getElementById("progress-container");
+    const progressFill = document.getElementById("progress-fill");
+    const progressLabel = document.getElementById("progress-label");
+
+    // Ensure dataset + UCI line are mutually exclusive on the client side.
+    datasetSelect.addEventListener("change", () => {
+      if (datasetSelect.value) {
+        uciInput.value = "";
+      }
+    });
+    uciInput.addEventListener("input", () => {
+      if (uciInput.value.trim().length > 0) {
+        datasetSelect.value = "";
+      }
+    });
+
+    // Helpers to create rows
+
+    function createRangeRow() {
+      const row = document.createElement("div");
+      row.className = "repeat-row";
+
+      row.innerHTML = `
+        <div class="field">
+          <label>Attr index</label>
+          <input type="number" min="1" class="range-attr"
+                 placeholder="e.g. 13" />
+        </div>
+        <div class="field">
+          <label>Lower bound</label>
+          <input type="text" class="range-lo"
+                 placeholder="e.g. 18 or -inf" />
+        </div>
+        <div class="field">
+          <label>Upper bound</label>
+          <input type="text" class="range-hi"
+                 placeholder="e.g. 60 or inf" />
+        </div>
+        <button type="button" class="remove-btn">Remove</button>
+      `;
+
+      row.querySelector(".remove-btn").addEventListener("click", () => {
+        row.remove();
+      });
+
+      return row;
+    }
+
+    function createContrRow() {
+      const row = document.createElement("div");
+      row.className = "repeat-row";
+
+      row.innerHTML = `
+        <div class="field">
+          <label>Premise attr index</label>
+          <input type="number" min="1" class="contr-prem-attr"
+                 placeholder="e.g. 1 or 7" />
+        </div>
+        <div class="field">
+          <label>Premise operator</label>
+          <select class="contr-prem-op">
+            <option value=">">&gt;</option>
+            <option value=">=">&ge;</option>
+            <option value="<">&lt;</option>
+            <option value="<=">&le;</option>
+            <option value="=">=</option>
+            <option value="!=">!=</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Premise value / label</label>
+          <input type="text" class="contr-prem-val"
+                 placeholder="e.g. 70 or A75" />
+        </div>
+        <div class="field">
+          <label>Target attr index</label>
+          <input type="number" min="1" class="contr-target-attr"
+                 placeholder="e.g. 2 or 6" />
+        </div>
+        <div class="field">
+          <label>Target condition</label>
+          <select class="contr-target-op">
+            <option value="=">= (must equal)</option>
+            <option value="!=">!= (must differ)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Target label</label>
+          <input type="text" class="contr-target-label"
+                 placeholder="e.g. retired or A65" />
+        </div>
+        <button type="button" class="remove-btn">Remove</button>
+      `;
+
+      row.querySelector(".remove-btn").addEventListener("click", () => {
+        row.remove();
+      });
+
+      return row;
+    }
+
+    function createClassRow() {
+      const row = document.createElement("div");
+      row.className = "repeat-row";
+
+      row.innerHTML = `
+        <div class="field">
+          <label>Attr index</label>
+          <input type="number" min="1" class="class-attr"
+                 placeholder="e.g. 21 or 17" />
+        </div>
+        <div class="field">
+          <label>Label of interest</label>
+          <input type="text" class="class-label"
+                 placeholder="e.g. 1 or yes" />
+        </div>
+        <div class="field">
+          <label>Expected share</label>
+          <input type="text" class="class-exp"
+                 placeholder="e.g. 0.5" />
+        </div>
+        <div class="field">
+          <label>Tolerance</label>
+          <input type="text" class="class-tol"
+                 placeholder="e.g. 0.1" />
+        </div>
+        <button type="button" class="remove-btn">Remove</button>
+      `;
+
+      row.querySelector(".remove-btn").addEventListener("click", () => {
+        row.remove();
+      });
+
+      return row;
+    }
+
+    // Add initial empty rows so the GUI is not blank.
+    rangeList.appendChild(createRangeRow());
+    classList.appendChild(createClassRow());
+
+    // Buttons to add more rows
+    document.getElementById("add-range-btn").addEventListener("click", () => {
+      rangeList.appendChild(createRangeRow());
+    });
+
+    document.getElementById("add-contr-btn").addEventListener("click", () => {
+      contrList.appendChild(createContrRow());
+    });
+
+    document.getElementById("add-class-btn").addEventListener("click", () => {
+      classList.appendChild(createClassRow());
+    });
+
+    function startLoadingBar() {
+      progressContainer.classList.remove("hidden");
+      progressFill.style.width = "0%";
+      progressLabel.textContent = "Preparing MTV checker call…";
+
+      const steps = [
+        { pct: 35, text: "Fetching dataset via Python…" },
+        { pct: 70, text: "Running MTV checker (./run)…" },
+        { pct: 100, text: "Waiting for results and formatting output…" }
+      ];
+
+      steps.forEach((s, i) => {
+        setTimeout(() => {
+          progressFill.style.width = s.pct + "%";
+          progressLabel.textContent = s.text;
+        }, 200 + i * 600);
+      });
+    }
+
+    function buildHiddenSpecs() {
+      // Ranges: attr,lo,hi
+      const rangeSpecs = [];
+      rangeList.querySelectorAll(".repeat-row").forEach(row => {
+        const attr = row.querySelector(".range-attr").value.trim();
+        const lo   = row.querySelector(".range-lo").value.trim();
+        const hi   = row.querySelector(".range-hi").value.trim();
+        if (attr && lo && hi) {
+          rangeSpecs.push(attr + "," + lo + "," + hi);
+        }
+      });
+      rangesHidden.value = rangeSpecs.join("\n");
+
+      // Contradictions: attrX<k=>attrY!=LABEL etc.
+      const contrSpecs = [];
+      contrList.querySelectorAll(".repeat-row").forEach(row => {
+        const pAttr   = row.querySelector(".contr-prem-attr").value.trim();
+        const pOp     = row.querySelector(".contr-prem-op").value;
+        const pVal    = row.querySelector(".contr-prem-val").value.trim();
+        const tAttr   = row.querySelector(".contr-target-attr").value.trim();
+        const tOp     = row.querySelector(".contr-target-op").value;
+        const tLabel  = row.querySelector(".contr-target-label").value.trim();
+
+        if (pAttr && pVal && tAttr && tLabel) {
+          const left  = "attr" + pAttr + pOp + pVal;
+          const right = "attr" + tAttr + tOp + tLabel;
+          contrSpecs.push(left + "=>" + right);
+        }
+      });
+      contrsHidden.value = contrSpecs.join("\n");
+
+      // Class specs: attr,label,expected_share,tolerance
+      const classSpecs = [];
+      classList.querySelectorAll(".repeat-row").forEach(row => {
+        const attr = row.querySelector(".class-attr").value.trim();
+        const lab  = row.querySelector(".class-label").value.trim();
+        const exp  = row.querySelector(".class-exp").value.trim();
+        const tol  = row.querySelector(".class-tol").value.trim();
+        if (attr && lab && exp && tol) {
+          classSpecs.push(attr + "," + lab + "," + exp + "," + tol);
+        }
+      });
+      classesHidden.value = classSpecs.join("\n");
+    }
+
+    form.addEventListener("submit", () => {
+      buildHiddenSpecs();
+      startLoadingBar();
+    });
+  </script>
+</body>
+</html>
