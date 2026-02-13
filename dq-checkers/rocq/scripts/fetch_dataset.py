@@ -19,11 +19,6 @@ def _ensure_out_dir(out_dir: str) -> str:
 # ---------- named datasets (backwards-compatible mode) ----------
 
 def fetch_named_dataset(dataset: str, out_dir: str) -> None:
-    """
-    Old behavior:
-      --dataset german-credit    -> id=144,  output german_credit.csv
-      --dataset bank-marketing   -> id=222,  output bank_marketing.csv
-    """
     if dataset == "german-credit":
         uci_id   = 144
         csv_name = "german_credit.csv"
