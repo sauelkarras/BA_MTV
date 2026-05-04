@@ -47,6 +47,11 @@ trim = f . f
   where
     f = reverse . dropWhile isSpace
 
+-- Convert a proportion in [0,1] into an absolute count relative to totalRows.
+shareToCount :: Int -> Double -> Integer
+shareToCount totalRows p =
+  round (p * fromIntegral totalRows)
+
 --------------------------------------------------------------------------------
 -- Dataset handling
 --------------------------------------------------------------------------------
@@ -245,8 +250,8 @@ parseContrSpec s =
   case splitOnArrow s of
     Nothing -> Left ("Contr spec must contain '=>', got: " ++ s)
     Just (left, right) -> do
-      prem                <- parsePremise left
-      (aF, kindF, labF)   <- parseForbCat right
+      prem              <- parsePremise left
+      (aF, kindF, labF) <- parseForbCat right
       pure (ContrSpec prem aF kindF labF)
 
 --------------------------------------------------------------------------------
@@ -339,7 +344,6 @@ parseArgs = go emptyConfig
     -- unknown flag
     go _ (flag : _) =
       Left ("Unknown or malformed argument near: " ++ flag)
-
 
 --------------------------------------------------------------------------------
 -- Range checking (Coq in_range + num_le/num_ge)
@@ -528,8 +532,8 @@ runContrNumCat headers rows premAttr op c forbAttr forbKind forbLabel = do
             , let premHolds = evalNumCmp op vP c
             , let forbEq    = G.cat_eq vF forbLabel
             , let viol      = case forbKind of
-                                ForbIsNeq -> forbEq       -- require !=, violation if equal
-                                ForbIsEq  -> not forbEq   -- require ==, violation if not equal
+                                ForbIsNeq -> forbEq
+                                ForbIsEq  -> not forbEq
             ]
 
           premiseTrue    = [ (i,vP,vF) | (i,vP,vF,premH,_eq,_viol) <- withFlags, premH ]
@@ -642,8 +646,8 @@ runContrCatCat headers rows premAttr premLabel forbAttr forbKind forbLabel = do
             , let premEq = G.cat_eq vP premLabel
             , let forbEq = G.cat_eq vF forbLabel
             , let viol   = case forbKind of
-                             ForbIsNeq -> forbEq      -- require !=, violation if equal
-                             ForbIsEq  -> not forbEq  -- require ==, violation if not equal
+                             ForbIsNeq -> forbEq
+                             ForbIsEq  -> not forbEq
             ]
 
           premiseTrue    = [ (i,vP,vF) | (i,vP,vF,premEq,_eq,_viol) <- withFlags, premEq ]
@@ -694,7 +698,7 @@ runContrCatCat headers rows premAttr premLabel forbAttr forbKind forbLabel = do
       putStrLn $ "CHECK STATUS:           " ++ (if passed then "PASS" else "FAIL")
 
 --------------------------------------------------------------------------------
--- Class balance checking (Haskell aggregation, string column)
+-- Class balance checking (Coq predicate on derived counts)
 --------------------------------------------------------------------------------
 
 runClassCheck :: [String] -> [[String]] -> ClassSpec -> IO ()
@@ -706,21 +710,24 @@ runClassCheck headers rows (ClassSpec attrIdx lab expShare tol) = do
   if colIndex < 0 || colIndex >= length headers
     then putStrLn $ "Error: attribute index " ++ show attrIdx ++ " is out of bounds."
     else do
-      let colName    = headers !! colIndex
-          indexed    = zip [0..] rows
-          validRows  = [ (i, cols !! colIndex)
-                      | (i, cols) <- indexed
-                      , length cols > colIndex
-                      ]
-          totalRows  = length validRows
-          posRows    = [ (i,v) | (i,v) <- validRows, v == lab ]
-          posCount   = length posRows
-          share      =
+      let colName        = headers !! colIndex
+          indexed        = zip [0..] rows
+          validRows      = [ (i, cols !! colIndex)
+                           | (i, cols) <- indexed
+                           , length cols > colIndex
+                           ]
+          totalRows      = length validRows
+          posRows        = [ (i,v) | (i,v) <- validRows, v == lab ]
+          posCount       = length posRows
+          observedShare  =
             if totalRows == 0
               then 0
               else fromIntegral posCount / fromIntegral totalRows
-          diff       = abs (share - expShare)
-          passed     = diff <= tol
+          expectedCount  = shareToCount totalRows expShare
+          observedCount  = fromIntegral posCount :: Integer
+          toleranceCount = shareToCount totalRows tol
+          diffShare      = abs (observedShare - expShare)
+          passed         = G.within_tolerance expectedCount observedCount toleranceCount
 
       putStrLn $ "Column (attr):          " ++ colName ++ " (attr" ++ show attrIdx ++ ")"
       putStrLn $ "Label of interest:      " ++ lab
@@ -731,8 +738,11 @@ runClassCheck headers rows (ClassSpec attrIdx lab expShare tol) = do
       putStrLn "Summary:"
       putStrLn $ "  Total usable rows:     " ++ show totalRows
       putStrLn $ "  Count of label:        " ++ show posCount
-      putStrLn $ printf "  Observed share:        %.4f" share
-      putStrLn $ printf "  Absolute deviation:    %.4f" diff
+      putStrLn $ printf "  Observed share:        %.4f" observedShare
+      putStrLn $ printf "  Absolute deviation:    %.4f" diffShare
+      putStrLn $ "  Expected count:        " ++ show expectedCount
+      putStrLn $ "  Observed count:        " ++ show observedCount
+      putStrLn $ "  Tolerance count:       " ++ show toleranceCount
       putStrLn ""
       putStrLn $ "CHECK STATUS:           " ++ (if passed then "PASS" else "FAIL")
 
@@ -780,33 +790,38 @@ runAllClassChecks headers rows specs = do
           putStrLn "Per-label targets:"
 
           let compute spec =
-                let lab    = cbLabel spec
-                    hits   = [ () | (_,v) <- validRows, v == lab ]
-                    c      = length hits
-                    share  = if totalRows == 0
-                               then 0
-                               else fromIntegral c / fromIntegral totalRows
-                    diff   = abs (share - cbExpShare spec)
-                    passed = diff <= cbTolerance spec
-                in (spec, c, share, diff, passed)
+                let lab            = cbLabel spec
+                    hits           = [ () | (_,v) <- validRows, v == lab ]
+                    c              = length hits
+                    observedShare  = if totalRows == 0
+                                       then 0
+                                       else fromIntegral c / fromIntegral totalRows
+                    expectedCount  = shareToCount totalRows (cbExpShare spec)
+                    observedCount  = fromIntegral c :: Integer
+                    toleranceCount = shareToCount totalRows (cbTolerance spec)
+                    diffShare      = abs (observedShare - cbExpShare spec)
+                    passed         = G.within_tolerance expectedCount observedCount toleranceCount
+                in (spec, c, observedShare, diffShare, expectedCount, observedCount, toleranceCount, passed)
 
               results = map compute specsForAttr
-              anyFail = any (\(_,_,_,_,p) -> not p) results
+              anyFail = any (\(_,_,_,_,_,_,_,p) -> not p) results
 
-          mapM_ (\(spec,c,share,diff,passed) -> do
+          mapM_ (\(spec,c,observedShare,diffShare,expectedCount,observedCount,toleranceCount,passed) -> do
                     putStrLn $ "  Label:                " ++ cbLabel spec
-                    putStrLn $ printf "    expected:           %.4f ± %.4f"
+                    putStrLn $ printf "    expected share:     %.4f ± %.4f"
                                       (cbExpShare spec) (cbTolerance spec)
-                    putStrLn $ printf "    observed:           %.4f (%d rows)" share c
-                    putStrLn $ printf "    deviation:          %.4f" diff
+                    putStrLn $ printf "    observed share:     %.4f (%d rows)" observedShare c
+                    putStrLn $ printf "    absolute deviation: %.4f" diffShare
+                    putStrLn $ "    expected count:     " ++ show expectedCount
+                    putStrLn $ "    observed count:     " ++ show observedCount
+                    putStrLn $ "    tolerance count:    " ++ show toleranceCount
                     putStrLn $ "    status:             " ++ (if passed then "PASS" else "FAIL")
-                 ) results
+                ) results
 
           putStrLn ""
           putStrLn $ "OVERVIEW STATUS:       " ++ (if anyFail then "FAIL" else "PASS")
           putStrLn ""
 
-          -- Detailed per-label checks as before
           mapM_ (runClassCheck hs rs) specsForAttr
 
 --------------------------------------------------------------------------------
@@ -900,7 +915,6 @@ main = do
               putStrLn "================================================"
 
         (Just _, Just _) -> do
-          -- Should be ruled out by parseArgs, but keep a guard.
           putStrLn "Internal error: both dataset and UCI source set."
 
 printUsage :: IO ()
@@ -933,15 +947,18 @@ printUsage = do
   putStrLn "    --contr \"attrX=LAB1=>attrY!=LAB2\" (require Y != LAB2)"
   putStrLn "    --contr \"attrX=LAB1=>attrY=LAB2\"  (require Y = LAB2)"
   putStrLn ""
-  putStrLn "Class-balance checks (binary-style):"
+  putStrLn "Class-balance checks:"
   putStrLn "  --class \"attr,label,expected_share,tolerance\""
   putStrLn "    attr           : 1-based column index"
   putStrLn "    label          : the class label to track"
   putStrLn "    expected_share : in [0,1], e.g. 0.5"
-  putStrLn "    tolerance      : non-negative, e.g. 0.1"
+  putStrLn "    tolerance      : non-negative share, e.g. 0.1"
+  putStrLn "  The checker converts shares to absolute counts and applies"
+  putStrLn "  the extracted Rocq tolerance predicate on those counts."
   putStrLn "  You can repeat --class for the same column to get a combined overview."
   putStrLn ""
   putStrLn "Property semantics:"
   putStrLn "  Range:      values must lie in the given interval (with Coq comparators)."
   putStrLn "  Contradict: if premise holds, the stated requirement on target label must hold."
-  putStrLn "  Class:      observed share of the label must be within [expected_share±tolerance]."
+  putStrLn "  Class:      expected and observed shares are translated to counts and"
+  putStrLn "              checked via the extracted Rocq tolerance predicate."

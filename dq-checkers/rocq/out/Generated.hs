@@ -14,6 +14,9 @@ compOpp r =
    Lt -> Gt;
    Gt -> Lt}
 
+sub :: Prelude.Integer -> Prelude.Integer -> Prelude.Integer
+sub = (\n m -> Prelude.max 0 (n Prelude.- m))
+
 compare_cont :: Comparison -> Prelude.Integer -> Prelude.Integer ->
                 Comparison
 compare_cont r x y =
@@ -207,4 +210,15 @@ num_neq x c =
 cat_eq :: Prelude.String -> Prelude.String -> Prelude.Bool
 cat_eq =
   ((Prelude.==) :: Prelude.String -> Prelude.String -> Prelude.Bool)
+
+nat_abs :: Prelude.Integer -> Prelude.Integer -> Prelude.Integer
+nat_abs n m =
+  case (Prelude.<=) n m of {
+   Prelude.True -> sub m n;
+   Prelude.False -> sub n m}
+
+within_tolerance :: Prelude.Integer -> Prelude.Integer -> Prelude.Integer ->
+                    Prelude.Bool
+within_tolerance exp obs tol =
+  (Prelude.<=) (nat_abs exp obs) tol
 

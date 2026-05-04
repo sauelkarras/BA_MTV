@@ -26,4 +26,7 @@ Extraction "out/Generated.hs"
   ContrAtom.num_ge
   ContrAtom.num_eq
   ContrAtom.num_neq
-  ContrAtom.cat_eq.
+  ContrAtom.cat_eq
+
+  (* class-balance primitive *)
+  ClassBalanceAtom.within_tolerance.
